@@ -10,8 +10,6 @@ typedef struct RingBuffer {
 
 	ULONG Capacity; // the length of the buffer
 
-	//KSPIN_LOCK SplockTail;
-	//KSPIN_LOCK SplockHead;
 	KSPIN_LOCK SplockWrite; // only one Thread can write at the moment
 	KSPIN_LOCK SpLockRead; // only one Thread can read at the moment
 
@@ -49,8 +47,6 @@ RBInit(
 	RingBuf->pTail = RingBuf->pData;
 	RingBuf->Capacity = Size;
 
-	//KeInitializeSpinLock(&(RingBuf->SplockHead));
-	//KeInitializeSpinLock(&(RingBuf->SplockTail));
 	KeInitializeSpinLock(&(RingBuf->SplockWrite));
 	KeInitializeSpinLock(&(RingBuf->SpLockRead));
 
@@ -71,24 +67,7 @@ RBDeinit(
 
 	return ERROR_SUCCESS;
 }
-/*
-static VOID
-SpinlockExchange(
-	PCHAR* pSrc,
-	PCHAR* pDst, 
-	PKSPIN_LOCK Splock
-) {
-	KIRQL OldIrql;
 
-	KeRaiseIrql(HIGH_LEVEL, &OldIrql);
-	KeAcquireSpinLockAtDpcLevel(Splock);
-
-	*pDst = *pSrc;
-
-	KeReleaseSpinLockFromDpcLevel(Splock);
-	KeLowerIrql(OldIrql);
-} 
-*/
 ULONG
 RBSize(
 	PCHAR Head,
@@ -156,11 +135,8 @@ RBWrite(
 	KeRaiseIrql(HIGH_LEVEL, &OldIrql);
 	KeAcquireSpinLockAtDpcLevel(&(pRingBuf->SplockWrite));
 
-	PCHAR Head, Tail; // get value with spinlock and then use copy
-	//SpinlockExchange(&(pRingBuf->pHead), &Head, &(pRingBuf->SplockHead));
-	//SpinlockExchange(&(pRingBuf->pTail), &Tail, &(pRingBuf->SplockTail));
-	Head = pRingBuf->pHead;
-	Tail = pRingBuf->pTail;
+	PCHAR Head = pRingBuf->pHead;
+	PCHAR Tail = pRingBuf->pTail;
 
 	int Err;
     if (Size > RBFreeSize(Head, Tail, pRingBuf->Capacity)) {
@@ -182,9 +158,7 @@ RBWrite(
 		goto out;
 	}
 
-	//SpinlockExchange(&NewHead, &(pRingBuf->pHead), &(pRingBuf->SplockHead));
 	pRingBuf->pHead = NewHead;
-
 
 out:
 	KeReleaseSpinLockFromDpcLevel(&(pRingBuf->SplockWrite));
@@ -243,13 +217,8 @@ RBRead(
 	KeRaiseIrql(HIGH_LEVEL, &OldIrql);
 	KeAcquireSpinLockAtDpcLevel(&(pRingBuf->SpLockRead));
 
-	// TODO: res
-	PCHAR Head, Tail; // get value with sync and then use copy
-	/*SpinlockExchange(&(pRingBuf->pHead), &Head, &(pRingBuf->SplockHead));
-	SpinlockExchange(&(pRingBuf->pTail), &Tail, &(pRingBuf->SplockTail));
-*/
-	Head = pRingBuf->pHead;
-	Tail = pRingBuf->pTail;
+	PCHAR Head = pRingBuf->pHead;
+	PCHAR Tail = pRingBuf->pTail;
 
 	ULONG RetSize;
 	PCHAR NewTail;
@@ -268,7 +237,6 @@ RBRead(
 	}
 
 	*pSize = RetSize;
-	//SpinlockExchange(&NewTail, &(pRingBuf->pTail), &(pRingBuf->SplockTail));
 	pRingBuf->pTail = NewTail;
 out:
 	KeReleaseSpinLockFromDpcLevel(&(pRingBuf->SpLockRead));
@@ -281,10 +249,7 @@ INT
 RBLoadFactor(
 	PRINGBUFFER pRingBuf
 ) {
-	PCHAR Head, Tail; // get value with spinlock and then use copy
-	//SpinlockExchange(&(pRingBuf->pHead), &Head, &(pRingBuf->SplockHead));
-	//SpinlockExchange(&(pRingBuf->pTail), &Tail, &(pRingBuf->SplockTail));
-	Head = pRingBuf->pHead;
-	Tail = pRingBuf->pTail;
+	PCHAR Head = pRingBuf->pHead;
+	PCHAR Tail = pRingBuf->pTail;
 	return (INT)(100 * RBSize(Head, Tail, pRingBuf->Capacity)) / pRingBuf->Capacity;
 }
