@@ -6,9 +6,7 @@
 
 
 HANDLE ThreadHandle;
-// PKTHREAD pThread;
-
-
+PKTHREAD pThread; // to have check the end of routine in case of "stop driver"
 
 
 NTSTATUS DriverEntry(
@@ -95,6 +93,8 @@ VOID ThreadFunc(
 	}
 
 	KeDelayExecutionThread(KernelMode, FALSE, &Interval);
+
+
 	DbgPrint("1 ...");
 	DbgPrint("1 ...");
 	DbgPrint("1 Combined path: DPC (1.9 msg) and TIMEOUT (1.1 msg) flushing messages");
@@ -148,19 +148,22 @@ DriverEntry(
 
 	if (NT_SUCCESS(status)) {
 		DbgPrint("[test_driver_1]: 'ObReferenceObjectByHandle()' is started");
-		/*status = ObReferenceObjectByHandle(
+		status = ObReferenceObjectByHandle(
 			ThreadHandle,
 			FILE_ANY_ACCESS,
 			NULL,
 			KernelMode,
 			(PVOID *) &(pThread),
-			NULL);*/
+			NULL);
 		DbgPrint("[test_driver_1]: 'ObReferenceObjectByHandle()' is finished, status %d", status);
 
-	} else {
+	}
+	else {
 		DbgPrint("[test_driver_1]: error exit");
 		return ERROR_TOO_MANY_TCBS;
 	}
+
+	DbgPrint("[klogger_test_1]: 'DriverEntry()' finished");
 
 	DbgPrint("[klogger_test_1]: 'DriverEntry()' finished");
 
@@ -175,21 +178,24 @@ DriverUnload(
 ) {
 	UNREFERENCED_PARAMETER(DriverObject);
 	DbgPrint("[test_driver_1]: 'DriverUnload()' is started");
-
-	KLoggerDeinit();
-
 	DbgPrint("[test_driver_1]: 'KeWaitForSingleObject()' is started");
-	/*KeWaitForSingleObject(
+	__debugbreak();
+	KeWaitForSingleObject(
 		pThread,
 		Executive,
 		KernelMode,
 		FALSE,
 		NULL
-	);*/
+	);
+
+	__debugbreak();
+
+	KLoggerDeinit();
 
 	DbgPrint("[test_driver_1]: 'KeWaitForSingleObject()' is finished");
 
-	//ObDereferenceObject(pThread);
+	ObDereferenceObject(pThread);
+
 	ZwClose(ThreadHandle);
 
 	DbgPrint("[test_driver_1]: 'DriverUnload()' is finished");

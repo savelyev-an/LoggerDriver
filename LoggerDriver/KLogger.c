@@ -59,6 +59,11 @@ WriteToFile(
 	return Status;
 }
 
+/*
+static VOID ReleaseFileHandle() {
+	ZwClose(gKLogger->FileHandle);
+}
+*/
 VOID 
 FlushingThreadFunc(
 	IN PVOID _Unused
@@ -108,6 +113,9 @@ FlushingThreadFunc(
 
 		} else if (Status == STATUS_WAIT_1) {
 			KeClearEvent(&gKLogger->StopEvent);
+			__debugbreak();
+			//ReleaseFileHandle();
+			__debugbreak();
 			PsTerminateSystemThread(ERROR_SUCCESS); // exit
 		}
 
@@ -118,87 +126,7 @@ FlushingThreadFunc(
 		}
 	}
 }
-#if 0
-ULONG GetRingBufSize(
-	PUNICODE_STRING RegistryPath
-) {  
-    HANDLE RegKeyHandle;
-    NTSTATUS Status;
-    OBJECT_ATTRIBUTES OdjAttr;
-    UNICODE_STRING RegKeyPath;
-    ULONG KeyValue = DEFAULT_RING_BUF_SIZE;
  
-    PKEY_VALUE_PARTIAL_INFORMATION PartInfo;
-    ULONG PartInfoSize;
- 
-    InitializeObjectAttributes(&OdjAttr, RegistryPath, 0, NULL, NULL);
- 
-    Status = ZwCreateKey(
-		&RegKeyHandle, 
-		KEY_QUERY_VALUE | KEY_SET_VALUE, 
-		&OdjAttr, 
-		0,  
-		NULL, 
-		REG_OPTION_NON_VOLATILE, 
-		NULL
-	);
-
-    if (!NT_SUCCESS(Status)) {
-        DbgPrint("[library_driver]: 'ZwCreateKey()' failed");
-        return DEFAULT_RING_BUF_SIZE;
-    }
- 
-    RtlInitUnicodeString(&RegKeyPath, REGISTRY_BUF_SIZE_KEY);
-   
-    PartInfoSize = sizeof(KEY_VALUE_PARTIAL_INFORMATION) + sizeof(PartInfoSize);
-    PartInfo = ExAllocatePool(PagedPool, PartInfoSize);
-    if (!PartInfo) {
-        DbgPrint("[library_driver]: 'ExAllocatePool()' failed");
-        ZwClose(RegKeyHandle);
-        return DEFAULT_RING_BUF_SIZE;
-    }
- 
-    Status = ZwQueryValueKey(RegKeyHandle, &RegKeyPath, KeyValuePartialInformation,
-        PartInfo, PartInfoSize, &PartInfoSize);
- 
-    switch (Status) {
-        case STATUS_SUCCESS:
-            DbgPrint("[library_driver]: switch: STATUS_SUCCESS");
-            if (PartInfo->Type == REG_DWORD && PartInfo->DataLength == sizeof(ULONG)) {
-                RtlCopyMemory(&KeyValue, PartInfo->Data, sizeof(KeyValue));
-                ZwClose(RegKeyHandle);
-                ExFreePool(PartInfo);
-                return KeyValue;
-            }
-            // break; - not break
- 
-        case STATUS_OBJECT_NAME_NOT_FOUND:
-            DbgPrint("[library_driver]: switch: STATUS_OBJECT_NAME_NOT_FOUND");
-            Status = ZwSetValueKey(RegKeyHandle, &RegKeyPath, 0, REG_DWORD, &KeyValue, sizeof(KeyValue));
-            if (!NT_SUCCESS(Status)) {
-                ZwClose(RegKeyHandle);
-                ExFreePool(PartInfo);
-                return DEFAULT_RING_BUF_SIZE;
-            }
- 
-            break;
- 
-        default:
-            DbgPrint("[library_driver]: switch: default");
-            ZwClose(RegKeyHandle);
-            ExFreePool(PartInfo);
-            return DEFAULT_RING_BUF_SIZE;
- 
-            break;
-           
-    }
- 
-    ZwClose(RegKeyHandle);
-    ExFreePool(PartInfo);
- 
-    return DEFAULT_RING_BUF_SIZE;
-}
-#endif
 INT 
 KLoggerInit(
 	IN PUNICODE_STRING fileName,
@@ -243,7 +171,6 @@ KLoggerInit(
 		goto err_flush_mem;
 	}
 
-	//__debugbreak();
 
 	// open file for flushing thread
 	OBJECT_ATTRIBUTES ObjAttr;
@@ -251,7 +178,6 @@ KLoggerInit(
 
 	InitializeObjectAttributes(
 		&ObjAttr,
-		//(PUNICODE_STRING)&UniName,
 		fileName,
 		OBJ_CASE_INSENSITIVE | OBJ_KERNEL_HANDLE,
 		NULL,
@@ -294,7 +220,6 @@ KLoggerInit(
 			KernelMode,
 			(PVOID*)&(gKLogger->pFlushingThread),
 			NULL);
-
 	} else {
 		Err = ERROR_TOO_MANY_TCBS;
 		goto err_thread;
@@ -314,6 +239,7 @@ KLoggerInit(
 	return STATUS_SUCCESS;
 
 err_thread:
+	__debugbreak();
 	ZwClose(gKLogger->FileHandle);
 
 err_file:
@@ -334,8 +260,7 @@ err_klogger_mem:
 
 VOID 
 KLoggerDeinit() {
-	KeFlushQueuedDpcs();
-
+	//KLoggerStop();
 	KeSetEvent(&(gKLogger->StopEvent), 0, FALSE);
 
 	KeWaitForSingleObject(
@@ -344,6 +269,8 @@ KLoggerDeinit() {
 		KernelMode,
 		FALSE,
 		NULL);
+
+	KeFlushQueuedDpcs();
 
 	ObDereferenceObject(gKLogger->pFlushingThread);
 	ZwClose(gKLogger->FlushingThreadHandle);
@@ -356,6 +283,15 @@ KLoggerDeinit() {
 	RBDeinit(gKLogger->pRingBuf);
 	ExFreePool(gKLogger);
 }
+
+
+/*
+VOID KLoggerStop()
+{
+	__debugbreak();
+	KeSetEvent(&(gKLogger->StopEvent), 0, FALSE);
+}
+*/
 
 static ULONG 
 StrLen(
@@ -388,9 +324,9 @@ SetWriteEvent(
 
 INT 
 KLoggerLog(
-	PCSTR LogMsg
+	IN PCSTR LogMsg
 ) {
-//	__debugbreak();
+	if (!gKLogger) return ERROR_OBJECT_NO_LONGER_EXISTS;
 
 	int Err = RBWrite(gKLogger->pRingBuf, LogMsg, StrLen(LogMsg));
 	int LoadFactor = RBLoadFactor(gKLogger->pRingBuf);
