@@ -11,7 +11,7 @@
 
 typedef struct KLogger
 {
-	PRINGBUFFER pRingBuf;
+	PRINGBUFFER pRingBuf; 
 
 	HANDLE FileHandle;
 	PCHAR pFlushingBuf;
@@ -118,7 +118,7 @@ FlushingThreadFunc(
 		}
 	}
 }
-
+#if 0
 SIZE_T GetRingBufSize(
 	PUNICODE_STRING RegistryPath
 ) {  
@@ -198,7 +198,7 @@ SIZE_T GetRingBufSize(
  
     return DEFAULT_RING_BUF_SIZE;
 }
-
+#endif
 INT 
 KLoggerInit(
 	PUNICODE_STRING RegistryPath
@@ -213,7 +213,7 @@ KLoggerInit(
 		goto err_klogger_mem;
 	}
 
-	SIZE_T RingBufSize = GetRingBufSize(RegistryPath);
+	SIZE_T RingBufSize = DEFAULT_RING_BUF_SIZE; //GetRingBufSize(RegistryPath);
 	Err = RBInit(&(gKLogger->pRingBuf), RingBufSize);
 
 	if (Err != ERROR_SUCCESS) {
