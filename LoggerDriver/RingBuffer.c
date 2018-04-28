@@ -16,9 +16,9 @@ typedef struct RingBuffer {
 } RINGBUFFER;
 
 INT
-RBInit(
-	PRINGBUFFER* pRingBuf,
-	ULONG Size
+RBInit( 
+	IN PRINGBUFFER* pRingBuf,
+	IN ULONG Size
 ) {
 	INT Err = ERROR_SUCCESS;
 
@@ -56,7 +56,7 @@ err_ret:
 
 INT
 RBDeinit(
-	PRINGBUFFER pRingBuf
+	IN PRINGBUFFER pRingBuf
 ) {
 	if (!pRingBuf) {
 		return ERROR_BAD_ARGUMENTS;
@@ -70,30 +70,26 @@ RBDeinit(
 
 ULONG
 RBSize(
-	PCHAR Head,
-	PCHAR Tail,
-	ULONG Capacity
+	IN PRINGBUFFER pRingBuf
 ) {
-	if (Head >= Tail) {
-		return (ULONG)(Head - Tail);
+	if (pRingBuf->pHead >= pRingBuf->pTail) {
+		return (ULONG)(pRingBuf->pHead - pRingBuf->pTail);
 
 	} else {
-		return (ULONG)(Capacity - (Tail - Head));
+		return (ULONG)(pRingBuf->Capacity - (pRingBuf->pTail - pRingBuf->pHead));
 	}
 }
 
 static ULONG
 RBFreeSize(
-	PCHAR Head,
-	PCHAR Tail,
-	ULONG Capacity
+	IN PRINGBUFFER pRingBuf
 ) {
-	return Capacity - RBSize(Head, Tail, Capacity);
+	return pRingBuf->Capacity - RBSize(pRingBuf);
 }
 
 static INT
 RingDataWrite(
-	PCHAR SrcBuf,
+	IN PCHAR SrcBuf,
 	ULONG SrcBufSize,
 	PCHAR Data,
 	ULONG Capacity,
@@ -123,9 +119,9 @@ RingDataWrite(
 
 ULONG 
 RBWrite(
-	PRINGBUFFER pRingBuf, 
-	PCHAR pBuf, 
-	ULONG Size
+	_REF_ PRINGBUFFER pRingBuf, 
+	IN PCHAR pBuf, 
+	IN ULONG Size
 ) {
 	if (!pRingBuf) {
 		return ERROR_BAD_ARGUMENTS;
@@ -139,7 +135,7 @@ RBWrite(
 	PCHAR Tail = pRingBuf->pTail;
 
 	int Err;
-    if (Size > RBFreeSize(Head, Tail, pRingBuf->Capacity)) {
+    if (Size > RBFreeSize(pRingBuf) ){
 		Err = ERROR_INSUFFICIENT_BUFFER;
 		goto out;
 	}
@@ -169,6 +165,7 @@ out:
 
 static INT 
 RingDataRead(
+	PRINGBUFFER pRingBuf,
 	PCHAR pDstBuf,
 	ULONG DstBufSize,
 	PCHAR Data,
@@ -178,7 +175,7 @@ RingDataRead(
 	PULONG pRetSize,
 	PCHAR* NewTail
 ) {
-	ULONG Size = RBSize(Head, Tail, Capacity);
+	ULONG Size = RBSize(pRingBuf);
 	ULONG RetSize = (DstBufSize < Size) ? DstBufSize : Size;
 	*pRetSize = RetSize;
 
@@ -205,9 +202,9 @@ RingDataRead(
 // there is only one reader - fluhsing thread -> no sync
 INT 
 RBRead(
-	PRINGBUFFER pRingBuf, 
-	PCHAR pBuf, 
-	PULONG pSize
+	_REF_ PRINGBUFFER pRingBuf, 
+	OUT   PCHAR pBuf, 
+	_REF_ PULONG pSize
 ) {
 	if (!pRingBuf || !pSize) {
 		return ERROR_BAD_ARGUMENTS;
@@ -223,6 +220,7 @@ RBRead(
 	ULONG RetSize;
 	PCHAR NewTail;
 	int Err = RingDataRead(
+				pRingBuf,
 				pBuf, 
 				*pSize, 
 				pRingBuf->pData, 
@@ -247,9 +245,9 @@ out:
 
 INT 
 RBLoadFactor(
-	PRINGBUFFER pRingBuf
+	IN PRINGBUFFER pRingBuf
 ) {
 	PCHAR Head = pRingBuf->pHead;
 	PCHAR Tail = pRingBuf->pTail;
-	return (INT)(100 * RBSize(Head, Tail, pRingBuf->Capacity)) / pRingBuf->Capacity;
+	return (INT)(100 * RBSize(pRingBuf)) / pRingBuf->Capacity;
 }
