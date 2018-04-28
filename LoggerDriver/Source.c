@@ -6,7 +6,7 @@
 
 
 HANDLE ThreadHandle;
-PKTHREAD pThread;
+// PKTHREAD pThread;
 
 
 
@@ -24,7 +24,7 @@ VOID DriverUnload(
 VOID ThreadFunc(
 	IN PVOID _Unused
 ) {
-	__debugbreak();
+	//__debugbreak();
 
 	UNREFERENCED_PARAMETER(_Unused);
 
@@ -51,7 +51,7 @@ VOID ThreadFunc(
 	DbgPrint("1 Fast path: DPC flushing first part of messages");
 	KIRQL StartIrql = KeGetCurrentIrql();
 	
-	__debugbreak();
+	//__debugbreak();
 
 	for (KIRQL curIrql = StartIrql; curIrql <= HIGH_LEVEL; ++curIrql) {
 		
@@ -124,19 +124,13 @@ DriverEntry(
 	_In_ PUNICODE_STRING       RegistryPath
 ) {
 	UNREFERENCED_PARAMETER(RegistryPath);
-	__debugbreak();
-	/*
-	UNICODE_STRING fileName;
-	RtlInitUnicodeString(&fileName,
-		L"\\??\\C:\\drivers\\klogger.log");
-
-	KLoggerInit(&fileName);
-	*/
 	
-	UNICODE_STRING someString;
-	KLoggerInit(&someString);
+	
+	UNICODE_STRING fileName;  ;
+	RtlInitUnicodeString(&fileName, L"\\??\\C:\\drivers\\klogger.log");
+	KLoggerInit(&fileName, 1000);
 
-	__debugbreak();
+	//__debugbreak();
 
 	DbgPrint("[test_driver_1]: 'DriverEntry()' is executed");
 	DriverObject->DriverUnload = DriverUnload;
@@ -154,13 +148,13 @@ DriverEntry(
 
 	if (NT_SUCCESS(status)) {
 		DbgPrint("[test_driver_1]: 'ObReferenceObjectByHandle()' is started");
-		status = ObReferenceObjectByHandle(
+		/*status = ObReferenceObjectByHandle(
 			ThreadHandle,
 			FILE_ANY_ACCESS,
 			NULL,
 			KernelMode,
 			(PVOID *) &(pThread),
-			NULL);
+			NULL);*/
 		DbgPrint("[test_driver_1]: 'ObReferenceObjectByHandle()' is finished, status %d", status);
 
 	} else {
@@ -170,7 +164,7 @@ DriverEntry(
 
 	DbgPrint("[klogger_test_1]: 'DriverEntry()' finished");
 
-	__debugbreak();
+	//__debugbreak();
 
 	return STATUS_SUCCESS;
 }
@@ -185,17 +179,17 @@ DriverUnload(
 	KLoggerDeinit();
 
 	DbgPrint("[test_driver_1]: 'KeWaitForSingleObject()' is started");
-	KeWaitForSingleObject(
+	/*KeWaitForSingleObject(
 		pThread,
 		Executive,
 		KernelMode,
 		FALSE,
 		NULL
-	);
+	);*/
 
 	DbgPrint("[test_driver_1]: 'KeWaitForSingleObject()' is finished");
 
-	ObDereferenceObject(pThread);
+	//ObDereferenceObject(pThread);
 	ZwClose(ThreadHandle);
 
 	DbgPrint("[test_driver_1]: 'DriverUnload()' is finished");

@@ -3,7 +3,7 @@
 #include "KLogger.h"
 
 #define FLUSH_THRESHOLD 50u // in percents
-#define DEFAULT_RING_BUF_SIZE (100ull * 1024ull * 1024ull)
+#define DEFAULT_RING_BUF_SIZE (100ull * 1024ull * 1024ull) // only if it is not derectly given
 #define FLUSH_BUF_SIZE DEFAULT_RING_BUF_SIZE
 #define REGISTRY_BUF_SIZE_KEY L"BUF_SIZE"
 #define FLUSH_TIMEOUT 10000000ll
@@ -11,17 +11,17 @@
 
 typedef struct KLogger
 {
-	PRINGBUFFER pRingBuf; 
+	PRINGBUFFER pRingBuf; // the RingBuffer
 
-	HANDLE FileHandle;
-	PCHAR pFlushingBuf;
+	HANDLE FileHandle; // file Handle for writing
+	PCHAR pFlushingBuf; // flushing Buffer
 
-	HANDLE FlushingThreadHandle;
+	HANDLE FlushingThreadHandle; 
 	PKTHREAD pFlushingThread;
 
-	KEVENT FlushEvent;
-	KEVENT StartEvent;
-	KEVENT StopEvent;
+	KEVENT FlushEvent;  // event to flash data to file
+	KEVENT StartFlushingThreadEvent; // event to starting FlushingThread has been started
+	KEVENT StopEvent;   // event to stop TODO!!!
 
 	LONG volatile IsFlushDispatched;
 	PKDPC pFlushDpc;
@@ -39,9 +39,9 @@ VOID SetWriteEvent(
 
 static INT 
 WriteToFile(
-	HANDLE FileHandle,
-	PVOID Buf, 
-	SIZE_T Length
+	IN HANDLE FileHandle,
+	IN PVOID Buf, 
+	IN ULONG Length
 ) {
 	IO_STATUS_BLOCK IoStatusBlock;
 	NTSTATUS Status = ZwWriteFile(
@@ -64,7 +64,7 @@ FlushingThreadFunc(
 	IN PVOID _Unused
 ) {
 	UNREFERENCED_PARAMETER(_Unused);
-	KeSetEvent(&(gKLogger->StartEvent), 0, FALSE);
+	KeSetEvent(&(gKLogger->StartFlushingThreadEvent), 0, FALSE);
 
 	PVOID handles[2];
 	handles[0] = (PVOID)&(gKLogger->FlushEvent);
@@ -74,7 +74,7 @@ FlushingThreadFunc(
 	Timeout.QuadPart = -FLUSH_TIMEOUT;
 
 	NTSTATUS Status, WriteStatus;
-	SIZE_T Length = 0;
+	ULONG Length = 0;
 	while (TRUE) {
 		Status = KeWaitForMultipleObjects(
 			2,
@@ -119,7 +119,7 @@ FlushingThreadFunc(
 	}
 }
 #if 0
-SIZE_T GetRingBufSize(
+ULONG GetRingBufSize(
 	PUNICODE_STRING RegistryPath
 ) {  
     HANDLE RegKeyHandle;
@@ -201,29 +201,30 @@ SIZE_T GetRingBufSize(
 #endif
 INT 
 KLoggerInit(
-	PUNICODE_STRING RegistryPath
+	IN PUNICODE_STRING fileName,
+	IN ULONG bufferSize
+	
 ) {
 	int Err = ERROR_SUCCESS;
 	
-	__debugbreak();
-	
+	// allocate memory for the LoggerStructure
 	gKLogger = (PKLOGGER)ExAllocatePool(NonPagedPool, sizeof(KLOGGER));
 	if (gKLogger == NULL) {
 		Err = ERROR_NOT_ENOUGH_MEMORY;
 		goto err_klogger_mem;
 	}
 
-	SIZE_T RingBufSize = DEFAULT_RING_BUF_SIZE; //GetRingBufSize(RegistryPath);
-	Err = RBInit(&(gKLogger->pRingBuf), RingBufSize);
+	// Initialize the RingBuffer
+	if (bufferSize==0) bufferSize= DEFAULT_RING_BUF_SIZE;
+	Err = RBInit(&(gKLogger->pRingBuf), bufferSize);
 
 	if (Err != ERROR_SUCCESS) {
 		goto err_ring_buf_init;
 	}
 
-	__debugbreak();
-
+	// Initialize 
 	KeInitializeEvent(&(gKLogger->FlushEvent), SynchronizationEvent, FALSE);
-	KeInitializeEvent(&(gKLogger->StartEvent), SynchronizationEvent, FALSE);
+	KeInitializeEvent(&(gKLogger->StartFlushingThreadEvent), SynchronizationEvent, FALSE);
 	KeInitializeEvent(&(gKLogger->StopEvent), SynchronizationEvent, FALSE);
 
 	gKLogger->IsFlushDispatched = 0;
@@ -242,17 +243,16 @@ KLoggerInit(
 		goto err_flush_mem;
 	}
 
-	__debugbreak();
+	//__debugbreak();
 
 	// open file for flushing thread
-	UNICODE_STRING UniName;
 	OBJECT_ATTRIBUTES ObjAttr;
-	RtlInitUnicodeString(&UniName, LOG_FILE_NAME);
 	IO_STATUS_BLOCK IoStatusBlock;
 
 	InitializeObjectAttributes(
 		&ObjAttr,
-		(PUNICODE_STRING)&UniName,
+		//(PUNICODE_STRING)&UniName,
+		fileName,
 		OBJ_CASE_INSENSITIVE | OBJ_KERNEL_HANDLE,
 		NULL,
 		NULL
@@ -305,7 +305,7 @@ KLoggerInit(
 	Timeout.QuadPart = -START_TIMEOUT;
 
 	KeWaitForSingleObject(
-		&(gKLogger->StartEvent),
+		&(gKLogger->StartFlushingThreadEvent),
 		Executive,
 		KernelMode,
 		FALSE,
@@ -357,11 +357,11 @@ KLoggerDeinit() {
 	ExFreePool(gKLogger);
 }
 
-static SIZE_T 
+static ULONG 
 StrLen(
 	PCSTR Str
 ) {
-	SIZE_T Length = 0;
+	ULONG Length = 0;
 	while (*(Str + Length) != '\0') {
 		Length++;
 	}
@@ -400,22 +400,22 @@ KLoggerLog(
 //	__debugbreak();
 
 	if (((LoadFactor >= FLUSH_THRESHOLD) || (Err == ERROR_INSUFFICIENT_BUFFER))) {
-		__debugbreak();
+		//__debugbreak();
 		
 		DbgPrint("Pre Interlocked: is flush dpc queued: %d", gKLogger->IsFlushDispatched);
-		__debugbreak();
+		//__debugbreak();
 
 		OrigDst = InterlockedCompareExchange(&(gKLogger->IsFlushDispatched), 1, 0);
 
-		__debugbreak();
+		//__debugbreak();
 		DbgPrint("Post Interlocked original value: %d, is flush dpc queued: %d", OrigDst, gKLogger->IsFlushDispatched);
 		
-		__debugbreak();
+		//__debugbreak();
 
 		if (!OrigDst) {
-			__debugbreak();
+			//__debugbreak();
 			DbgPrint("Dpc is queued, load factor: %d\n", LoadFactor);
-			__debugbreak();
+			//__debugbreak();
 			KeInsertQueueDpc(gKLogger->pFlushDpc, NULL, NULL);
 		}
 	}

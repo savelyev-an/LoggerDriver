@@ -5,7 +5,7 @@
 INT
 RBInit(
 	PRINGBUFFER* pRingBuf,
-	SIZE_T Size
+	ULONG Size
 ) {
 	INT Err = ERROR_SUCCESS;
 
@@ -22,6 +22,7 @@ RBInit(
 
 	*pRingBuf = RingBuf;
 
+
 	RingBuf->Data = (PCHAR)ExAllocatePool(NonPagedPool, Size * sizeof(CHAR));
 	if (!RingBuf->Data) {
 		Err = ERROR_NOT_ENOUGH_MEMORY;
@@ -32,6 +33,7 @@ RBInit(
 	RingBuf->Head = RingBuf->Data;
 	RingBuf->Tail = RingBuf->Data;
 	RingBuf->Capacity = Size;
+
 
 	KeInitializeSpinLock(&(RingBuf->SplockHead));
 	KeInitializeSpinLock(&(RingBuf->SplockTail));
@@ -72,25 +74,25 @@ SpinlockExchange(
 	KeLowerIrql(OldIrql);
 } 
 
-SIZE_T
+ULONG
 RBSize(
 	PCHAR Head,
 	PCHAR Tail,
-	SIZE_T Capacity
+	ULONG Capacity
 ) {
 	if (Head >= Tail) {
-		return (SIZE_T)(Head - Tail);
+		return (ULONG)(Head - Tail);
 
 	} else {
-		return (SIZE_T)(Capacity - (Tail - Head));
+		return (ULONG)(Capacity - (Tail - Head));
 	}
 }
 
-static SIZE_T
+static ULONG
 RBFreeSize(
 	PCHAR Head,
 	PCHAR Tail,
-	SIZE_T Capacity
+	ULONG Capacity
 ) {
 	return Capacity - RBSize(Head, Tail, Capacity);
 }
@@ -98,15 +100,15 @@ RBFreeSize(
 static INT
 RingDataWrite(
 	PCHAR SrcBuf,
-	SIZE_T SrcBufSize,
+	ULONG SrcBufSize,
 	PCHAR Data,
-	SIZE_T Capacity,
+	ULONG Capacity,
 	PCHAR Head,
 	PCHAR Tail,
 	PCHAR* NewHead
 ) {
 	if (Head >= Tail) {
-		SIZE_T DistToFinish = Capacity - (Head - Data);
+		ULONG DistToFinish = Capacity - (Head - Data);
 		if (SrcBufSize > DistToFinish) {
 			RtlCopyMemory(Head, SrcBuf, DistToFinish);
 			RtlCopyMemory(Data, SrcBuf + DistToFinish, SrcBufSize - DistToFinish);
@@ -129,7 +131,7 @@ INT
 RBWrite(
 	PRINGBUFFER pRingBuf, 
 	PCHAR pBuf, 
-	SIZE_T Size
+	ULONG Size
 ) {
 	if (!pRingBuf) {
 		return ERROR_BAD_ARGUMENTS;
@@ -175,16 +177,16 @@ out:
 static INT 
 RingDataRead(
 	PCHAR pDstBuf,
-	SIZE_T DstBufSize,
+	ULONG DstBufSize,
 	PCHAR Data,
-	SIZE_T Capacity,
+	ULONG Capacity,
 	PCHAR Head,
 	PCHAR Tail,
-	PSIZE_T pRetSize,
+	PULONG pRetSize,
 	PCHAR* NewTail
 ) {
-	SIZE_T Size = RBSize(Head, Tail, Capacity);
-	SIZE_T RetSize = (DstBufSize < Size) ? DstBufSize : Size;
+	ULONG Size = RBSize(Head, Tail, Capacity);
+	ULONG RetSize = (DstBufSize < Size) ? DstBufSize : Size;
 	*pRetSize = RetSize;
 
 	if (Head >= Tail) {
@@ -192,7 +194,7 @@ RingDataRead(
 		*NewTail = Tail + RetSize;
 
 	} else {
-		SIZE_T DistToFlush = Capacity - (Tail - Data);
+		ULONG DistToFlush = Capacity - (Tail - Data);
 		if (RetSize <= DistToFlush) {
 			RtlCopyMemory(pDstBuf, Tail, RetSize);
 			*NewTail = Tail + RetSize;
@@ -212,7 +214,7 @@ INT
 RBRead(
 	PRINGBUFFER pRingBuf, 
 	PCHAR pBuf, 
-	PSIZE_T pSize
+	PULONG pSize
 ) {
 	if (!pRingBuf || !pSize) {
 		return ERROR_BAD_ARGUMENTS;
@@ -223,7 +225,7 @@ RBRead(
 	SpinlockExchange(&(pRingBuf->Head), &Head, &(pRingBuf->SplockHead));
 	SpinlockExchange(&(pRingBuf->Tail), &Tail, &(pRingBuf->SplockTail));
 
-	SIZE_T RetSize;
+	ULONG RetSize;
 	PCHAR NewTail;
 	int Err = RingDataRead(
 				pBuf, 

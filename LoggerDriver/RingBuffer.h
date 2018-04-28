@@ -2,12 +2,16 @@
 
 #include "ntddk.h"
 
+#define _REF_ // marked input&output param in method 
+
+
+
 typedef struct RingBuffer {
 	PCHAR Data;
 	PCHAR Head;
 	PCHAR Tail;
 
-	ULONGLONG Capacity;
+	ULONG Capacity;
 
 	KSPIN_LOCK SplockTail;
 	KSPIN_LOCK SplockHead;
@@ -17,9 +21,9 @@ typedef struct RingBuffer {
 
 typedef struct RingBuffer* PRINGBUFFER;
 
-INT RBInit(PRINGBUFFER* pRingBuf, SIZE_T Size);
-INT RBDeinit(PRINGBUFFER pRingBuf);
-INT RBWrite(PRINGBUFFER pRingBuf, PCHAR pBuf, SIZE_T Size);
-INT RBRead(PRINGBUFFER pRingBuf, PCHAR pBuf, PSIZE_T pSize);
-SIZE_T RBSize(PCHAR Head, PCHAR Tail, SIZE_T Capacity);
+INT RBInit(IN PRINGBUFFER* pRingBuf, IN ULONG Size);
+INT RBDeinit(IN PRINGBUFFER pRingBuf);
+INT RBWrite(_REF_ PRINGBUFFER pRingBuf, IN PCHAR pBuf, IN ULONG Size);
+INT RBRead(_REF_ PRINGBUFFER pRingBuf, OUT PCHAR pBuf,  PULONG pSize);
+ULONG RBSize(PCHAR Head, PCHAR Tail, ULONG Capacity);
 INT RBLoadFactor(PRINGBUFFER pRingBuf);
