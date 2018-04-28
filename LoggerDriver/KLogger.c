@@ -24,7 +24,7 @@ typedef struct KLogger
 	KEVENT StopEvent;   // event to stop TODO!!!
 
 	LONG volatile IsFlushDispatched;
-	PKDPC pFlushDpc;
+	//PKDPC pFlushDpc;
 
 } KLOGGER;
 
@@ -59,11 +59,6 @@ WriteToFile(
 	return Status;
 }
 
-/*
-static VOID ReleaseFileHandle() {
-	ZwClose(gKLogger->FileHandle);
-}
-*/
 VOID 
 FlushingThreadFunc(
 	IN PVOID _Unused
@@ -113,9 +108,6 @@ FlushingThreadFunc(
 
 		} else if (Status == STATUS_WAIT_1) {
 			KeClearEvent(&gKLogger->StopEvent);
-			__debugbreak();
-			//ReleaseFileHandle();
-			__debugbreak();
 			PsTerminateSystemThread(ERROR_SUCCESS); // exit
 		}
 
@@ -156,13 +148,13 @@ KLoggerInit(
 	KeInitializeEvent(&(gKLogger->StopEvent), SynchronizationEvent, FALSE);
 
 	gKLogger->IsFlushDispatched = 0;
-	gKLogger->pFlushDpc = (PKDPC)ExAllocatePool(NonPagedPool, sizeof(KDPC));
-	if (!gKLogger->pFlushDpc) {
-		Err = ERROR_NOT_ENOUGH_MEMORY;
-		goto err_dpc_mem;
-	}
+//	gKLogger->pFlushDpc = (PKDPC)ExAllocatePool(NonPagedPool, sizeof(KDPC));
+//	if (!gKLogger->pFlushDpc) {
+//		Err = ERROR_NOT_ENOUGH_MEMORY;
+//		goto err_dpc_mem;
+//	}
 
-	KeInitializeDpc(gKLogger->pFlushDpc, SetWriteEvent, NULL);
+//	KeInitializeDpc(gKLogger->pFlushDpc, SetWriteEvent, NULL);
 
 	// alloc buffer for flushing thread
 	gKLogger->pFlushingBuf = (PCHAR)ExAllocatePool(PagedPool, FLUSH_BUF_SIZE * sizeof(CHAR));
@@ -239,14 +231,13 @@ KLoggerInit(
 	return STATUS_SUCCESS;
 
 err_thread:
-	__debugbreak();
 	ZwClose(gKLogger->FileHandle);
 
 err_file:
 	ExFreePool(gKLogger->pFlushingBuf);
 
 err_flush_mem:
-	ExFreePool(gKLogger->pFlushDpc);
+//	ExFreePool(gKLogger->pFlushDpc);
 
 err_dpc_mem:
 	RBDeinit(gKLogger->pRingBuf);
@@ -260,9 +251,10 @@ err_klogger_mem:
 
 VOID 
 KLoggerDeinit() {
-	//KLoggerStop();
+	// Provide an event to finish the flushing thread 
 	KeSetEvent(&(gKLogger->StopEvent), 0, FALSE);
 
+	// wait till the end of the flushing thread
 	KeWaitForSingleObject(
 		gKLogger->pFlushingThread,
 		Executive,
@@ -278,20 +270,12 @@ KLoggerDeinit() {
 	ExFreePool(gKLogger->pFlushingBuf);
 	ZwClose(gKLogger->FileHandle);
 
-	ExFreePool(gKLogger->pFlushDpc);
+//	ExFreePool(gKLogger->pFlushDpc);
 
 	RBDeinit(gKLogger->pRingBuf);
 	ExFreePool(gKLogger);
 }
 
-
-/*
-VOID KLoggerStop()
-{
-	__debugbreak();
-	KeSetEvent(&(gKLogger->StopEvent), 0, FALSE);
-}
-*/
 
 static ULONG 
 StrLen(
@@ -304,7 +288,7 @@ StrLen(
 
 	return Length;
 }
-
+/*
 VOID 
 SetWriteEvent(
 	IN PKDPC pthisDpcObject,
@@ -321,7 +305,7 @@ SetWriteEvent(
 	DbgPrint("Set Write Event\n");
 	KeSetEvent(&gKLogger->FlushEvent, 0, FALSE);
 }
-
+*/
 INT 
 KLoggerLog(
 	IN PCSTR LogMsg
@@ -333,26 +317,21 @@ KLoggerLog(
 	DbgPrint("Load factor: %d\n", LoadFactor);
 	LONG OrigDst;
 
-//	__debugbreak();
 
 	if (((LoadFactor >= FLUSH_THRESHOLD) || (Err == ERROR_INSUFFICIENT_BUFFER))) {
-		//__debugbreak();
 		
 		DbgPrint("Pre Interlocked: is flush dpc queued: %d", gKLogger->IsFlushDispatched);
-		//__debugbreak();
 
 		OrigDst = InterlockedCompareExchange(&(gKLogger->IsFlushDispatched), 1, 0);
 
-		//__debugbreak();
 		DbgPrint("Post Interlocked original value: %d, is flush dpc queued: %d", OrigDst, gKLogger->IsFlushDispatched);
 		
-		//__debugbreak();
 
 		if (!OrigDst) {
-			//__debugbreak();
-			DbgPrint("Dpc is queued, load factor: %d\n", LoadFactor);
-			//__debugbreak();
-			KeInsertQueueDpc(gKLogger->pFlushDpc, NULL, NULL);
+			//DbgPrint("Dpc is queued, load factor: %d\n", LoadFactor);
+			//KeInsertQueueDpc(gKLogger->pFlushDpc, NULL, NULL);
+			DbgPrint("Try to use FlashEvent, load factor: %d\n", LoadFactor);
+			KeSetEvent(&gKLogger->FlushEvent, 0, FALSE);
 		}
 	}
 	return Err;

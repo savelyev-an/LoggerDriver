@@ -34,7 +34,6 @@ RBInit(
 	RingBuf->Tail = RingBuf->Data;
 	RingBuf->Capacity = Size;
 
-
 	KeInitializeSpinLock(&(RingBuf->SplockHead));
 	KeInitializeSpinLock(&(RingBuf->SplockTail));
 	KeInitializeSpinLock(&(RingBuf->SplockWrite));

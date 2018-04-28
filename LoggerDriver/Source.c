@@ -22,7 +22,6 @@ VOID DriverUnload(
 VOID ThreadFunc(
 	IN PVOID _Unused
 ) {
-	//__debugbreak();
 
 	UNREFERENCED_PARAMETER(_Unused);
 
@@ -58,10 +57,10 @@ VOID ThreadFunc(
 		KIRQL _OldIrql;
 		KeRaiseIrql(curIrql, &_OldIrql);
 		INT LogStat = KLoggerLog(Message[curIrql]);
-		DbgPrint("[klogtest 1]: curIRQL == %d, message: %s, status: %d", 
+		DbgPrint("[klogtest 1]: curIRQL == %d, status: %d, message: %s", 
 			curIrql, 
-			Message[curIrql], 
-			LogStat
+			LogStat,
+			Message[curIrql]
 		);
 
 		KeLowerIrql(StartIrql);
@@ -74,18 +73,18 @@ VOID ThreadFunc(
 	Interval.QuadPart = -2 * FLUSH_TIMEOUT;
 
 	KeDelayExecutionThread(KernelMode, FALSE, &Interval);
-	DbgPrint("1 ...");
-	DbgPrint("1 ...");
-	DbgPrint("1 Slow path: TIMEOUT flushing all messages");
+	DbgPrint("1 ...\n");
+	DbgPrint("1 ...\n");
+	DbgPrint("1 Slow path: TIMEOUT flushing all messages\n");
 
 	for (KIRQL curIrql = StartIrql; curIrql <= HIGH_LEVEL; ++curIrql) {
 		KIRQL _OldIrql;
 		KeRaiseIrql(curIrql, &_OldIrql);
 		INT LogStat = KLoggerLog(Message[curIrql]);
-		DbgPrint("[klogtest 1]: curIRQL == %d, message: %s, status: %d", 
-			curIrql, 
-			Message[curIrql], 
-			LogStat
+		DbgPrint("[klogtest 1]: curIRQL == %d, status: %d, message: %s",
+			curIrql,
+			LogStat,
+			Message[curIrql]
 		);
 
 		KeLowerIrql(StartIrql);
@@ -103,10 +102,10 @@ VOID ThreadFunc(
 		KIRQL _OldIrql;
 		KeRaiseIrql(curIrql, &_OldIrql);
 		INT LogStat = KLoggerLog(Message[curIrql]);
-		DbgPrint("[klogtest 1]: curIRQL == %d, message: %s, status: %d", 
+		DbgPrint("[klogtest 1]: curIRQL == %d, status: %d, message: %s",
 			curIrql,
-			Message[curIrql], 
-			LogStat
+			LogStat,
+			Message[curIrql]
 		);
 
 		KeLowerIrql(StartIrql);
@@ -120,17 +119,15 @@ VOID ThreadFunc(
 
 NTSTATUS 
 DriverEntry(
-	_In_ struct _DRIVER_OBJECT *DriverObject,
-	_In_ PUNICODE_STRING       RegistryPath
+	IN struct _DRIVER_OBJECT *DriverObject,
+	IN PUNICODE_STRING       RegistryPath
 ) {
 	UNREFERENCED_PARAMETER(RegistryPath);
 	
 	
 	UNICODE_STRING fileName;  ;
 	RtlInitUnicodeString(&fileName, L"\\??\\C:\\drivers\\klogger.log");
-	KLoggerInit(&fileName, 1000);
-
-	//__debugbreak();
+	KLoggerInit(&fileName, 50);
 
 	DbgPrint("[test_driver_1]: 'DriverEntry()' is executed");
 	DriverObject->DriverUnload = DriverUnload;
@@ -165,21 +162,18 @@ DriverEntry(
 
 	DbgPrint("[klogger_test_1]: 'DriverEntry()' finished");
 
-	DbgPrint("[klogger_test_1]: 'DriverEntry()' finished");
-
-	//__debugbreak();
-
-	return STATUS_SUCCESS;
+		return STATUS_SUCCESS;
 }
 
 VOID 
 DriverUnload(
-	_In_ struct _DRIVER_OBJECT *DriverObject
+	IN struct _DRIVER_OBJECT *DriverObject
 ) {
 	UNREFERENCED_PARAMETER(DriverObject);
 	DbgPrint("[test_driver_1]: 'DriverUnload()' is started");
 	DbgPrint("[test_driver_1]: 'KeWaitForSingleObject()' is started");
-	__debugbreak();
+
+	// Wait till the main thread will finish
 	KeWaitForSingleObject(
 		pThread,
 		Executive,
@@ -187,8 +181,6 @@ DriverUnload(
 		FALSE,
 		NULL
 	);
-
-	__debugbreak();
 
 	KLoggerDeinit();
 
