@@ -11,7 +11,7 @@ typedef struct RingBuffer {
 	ULONG Capacity; // the length of the buffer
 
 	KSPIN_LOCK SplockWrite; // only one Thread can write at the moment
-	KSPIN_LOCK SpLockRead; // only one Thread can read at the moment
+//	KSPIN_LOCK SpLockRead; // only one Thread can read at the moment
 
 } RINGBUFFER;
 
@@ -48,7 +48,7 @@ RBInit(
 	RingBuf->Capacity = Size;
 
 	KeInitializeSpinLock(&(RingBuf->SplockWrite));
-	KeInitializeSpinLock(&(RingBuf->SpLockRead));
+	//KeInitializeSpinLock(&(RingBuf->SpLockRead));
 
 err_ret:
 	return Err;
@@ -70,51 +70,27 @@ RBDeinit(
 
 ULONG
 RBSize(
-	IN PRINGBUFFER pRingBuf
+	IN PCHAR Head,
+	IN PCHAR Tail,
+	IN ULONG Capacity
 ) {
-	if (pRingBuf->pHead >= pRingBuf->pTail) {
-		return (ULONG)(pRingBuf->pHead - pRingBuf->pTail);
+	if (Head >= Tail) {
+		return (ULONG)(Head - Tail);
 
 	} else {
-		return (ULONG)(pRingBuf->Capacity - (pRingBuf->pTail - pRingBuf->pHead));
+		return (ULONG)(Capacity - (Tail - Head));
 	}
 }
+
 
 static ULONG
 RBFreeSize(
-	IN PRINGBUFFER pRingBuf
+	IN PCHAR Head,
+	IN PCHAR Tail,
+	IN ULONG Capacity
+
 ) {
-	return pRingBuf->Capacity - RBSize(pRingBuf);
-}
-
-static INT
-RingDataWrite(
-	IN PCHAR SrcBuf,
-	ULONG SrcBufSize,
-	PCHAR Data,
-	ULONG Capacity,
-	PCHAR Head,
-	PCHAR Tail,
-	PCHAR* NewHead
-) {
-	if (Head >= Tail) {
-		ULONG DistToFinish = Capacity - (Head - Data);
-		if (SrcBufSize > DistToFinish) {
-			RtlCopyMemory(Head, SrcBuf, DistToFinish);
-			RtlCopyMemory(Data, SrcBuf + DistToFinish, SrcBufSize - DistToFinish);
-			*NewHead = Data + SrcBufSize - DistToFinish;
-
-		} else {
-			RtlCopyMemory(Head, SrcBuf, SrcBufSize);
-			*NewHead = Head + SrcBufSize;
-		}
-
-	} else {
-		RtlCopyMemory(Head, SrcBuf, SrcBufSize);
-		*NewHead = Head + SrcBufSize;
-	}
-
-	return ERROR_SUCCESS;
+	return Capacity - RBSize(Head, Tail, Capacity);
 }
 
 ULONG 
@@ -123,8 +99,11 @@ RBWrite(
 	IN PCHAR pBuf, 
 	IN ULONG Size
 ) {
+	int Err = ERROR_SUCCESS;
+
 	if (!pRingBuf) {
-		return ERROR_BAD_ARGUMENTS;
+		Err= ERROR_BAD_ARGUMENTS;
+		goto out;
 	}
 
 	KIRQL OldIrql;
@@ -134,27 +113,32 @@ RBWrite(
 	PCHAR Head = pRingBuf->pHead;
 	PCHAR Tail = pRingBuf->pTail;
 
-	int Err;
-    if (Size > RBFreeSize(pRingBuf) ){
+    if (Size > RBFreeSize(Head, Tail, pRingBuf->Capacity) ){
 		Err = ERROR_INSUFFICIENT_BUFFER;
 		goto out;
 	}
 
 	PCHAR NewHead;
-	Err = RingDataWrite(
-			pBuf, 
-			Size, 
-			pRingBuf->pData, 
-			pRingBuf->Capacity,
-			Head,
-			Tail, 
-			&NewHead
-	);
-	if (Err != ERROR_SUCCESS) {
-		goto out;
+	
+	if (Head >= Tail) {
+		ULONG DistToFinish = pRingBuf->Capacity - (Head - pRingBuf->pData);
+		if (Size > DistToFinish) {
+			RtlCopyMemory(Head, pBuf, DistToFinish);
+			RtlCopyMemory(pRingBuf->pData, pBuf + DistToFinish, Size - DistToFinish);
+			NewHead = pRingBuf->pData + Size - DistToFinish;
+		}
+		else {
+			RtlCopyMemory(pRingBuf->pHead, pBuf, Size);
+			NewHead = Head + Size;
+		}
+
+	}
+	else {
+		RtlCopyMemory(Head, pBuf, Size);
+		NewHead = Head + Size;
 	}
 
-	pRingBuf->pHead = NewHead;
+		pRingBuf->pHead = NewHead;
 
 out:
 	KeReleaseSpinLockFromDpcLevel(&(pRingBuf->SplockWrite));
@@ -163,41 +147,6 @@ out:
 	return Err;
 }
 
-static INT 
-RingDataRead(
-	PRINGBUFFER pRingBuf,
-	PCHAR pDstBuf,
-	ULONG DstBufSize,
-	PCHAR Data,
-	ULONG Capacity,
-	PCHAR Head,
-	PCHAR Tail,
-	PULONG pRetSize,
-	PCHAR* NewTail
-) {
-	ULONG Size = RBSize(pRingBuf);
-	ULONG RetSize = (DstBufSize < Size) ? DstBufSize : Size;
-	*pRetSize = RetSize;
-
-	if (Head >= Tail) {
-		RtlCopyMemory(pDstBuf, Tail, RetSize);
-		*NewTail = Tail + RetSize;
-
-	} else {
-		ULONG DistToFlush = Capacity - (Tail - Data);
-		if (RetSize <= DistToFlush) {
-			RtlCopyMemory(pDstBuf, Tail, RetSize);
-			*NewTail = Tail + RetSize;
-
-		} else {
-			RtlCopyMemory(pDstBuf, Tail, DistToFlush);
-			RtlCopyMemory(pDstBuf + DistToFlush, Data, RetSize - DistToFlush);
-			*NewTail = Data + RetSize - DistToFlush;
-		}
-	}
-
-	return ERROR_SUCCESS;
-}
 
 // there is only one reader - fluhsing thread -> no sync
 INT 
@@ -206,48 +155,50 @@ RBRead(
 	OUT   PCHAR pBuf, 
 	_REF_ PULONG pSize
 ) {
+	INT Result = ERROR_SUCCESS;
 	if (!pRingBuf || !pSize) {
-		return ERROR_BAD_ARGUMENTS;
+		Result = ERROR_BAD_ARGUMENTS;
+		goto out;
 	}
-
-	KIRQL OldIrql;
-	KeRaiseIrql(HIGH_LEVEL, &OldIrql);
-	KeAcquireSpinLockAtDpcLevel(&(pRingBuf->SpLockRead));
-
+	
 	PCHAR Head = pRingBuf->pHead;
 	PCHAR Tail = pRingBuf->pTail;
 
-	ULONG RetSize;
 	PCHAR NewTail;
-	int Err = RingDataRead(
-				pRingBuf,
-				pBuf, 
-				*pSize, 
-				pRingBuf->pData, 
-				pRingBuf->Capacity, 
-				Head, 
-				Tail, 
-				&RetSize, 
-				&NewTail
-	);
-	if (Err != ERROR_SUCCESS) {
-		goto out;
-	}
+	
+	ULONG Size = RBSize(Head, Tail, pRingBuf->Capacity);
+	ULONG RetSize = (*pSize < Size) ? *pSize : Size;
+	
 
+	if (Head >= Tail) {
+		RtlCopyMemory(pBuf, Tail, RetSize);
+		NewTail = Tail + RetSize;
+
+	}
+	else {
+		ULONG DistToFlush = pRingBuf->Capacity - (Tail - pRingBuf->pData);
+		if (RetSize <= DistToFlush) {
+			RtlCopyMemory(pBuf, Tail, RetSize);
+			NewTail = Tail + RetSize;
+		}
+		else {
+			RtlCopyMemory(pBuf, Tail, DistToFlush);
+			RtlCopyMemory(pBuf + DistToFlush, pRingBuf->pData, RetSize - DistToFlush);
+			NewTail = pRingBuf->pData + RetSize - DistToFlush;
+		}
+	}
+	
 	*pSize = RetSize;
 	pRingBuf->pTail = NewTail;
 out:
-	KeReleaseSpinLockFromDpcLevel(&(pRingBuf->SpLockRead));
-	KeLowerIrql(OldIrql);
-
-	return Err;
+	
+	return Result;
 }
+
 
 INT 
 RBLoadFactor(
-	IN PRINGBUFFER pRingBuf
+	IN PRINGBUFFER  pRingBuf
 ) {
-	PCHAR Head = pRingBuf->pHead;
-	PCHAR Tail = pRingBuf->pTail;
-	return (INT)(100 * RBSize(pRingBuf)) / pRingBuf->Capacity;
+	return (INT)(100 * RBSize(pRingBuf->pHead, pRingBuf->pTail, pRingBuf->Capacity)) / pRingBuf->Capacity;
 }
