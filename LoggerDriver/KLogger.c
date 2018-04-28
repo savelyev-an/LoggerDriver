@@ -4,7 +4,6 @@
 
 #define FLUSH_THRESHOLD 50u // in percents
 #define DEFAULT_RING_BUF_SIZE (100ull * 1024ull * 1024ull) // only if it is not derectly given
-#define FLUSH_BUF_SIZE DEFAULT_RING_BUF_SIZE
 #define REGISTRY_BUF_SIZE_KEY L"BUF_SIZE"
 #define FLUSH_TIMEOUT 10000000ll
 #define START_TIMEOUT 50000000ll
@@ -20,11 +19,12 @@ typedef struct KLogger
 	PKTHREAD pFlushingThread;
 
 	KEVENT FlushEvent;  // event to flash data to file
-	KEVENT StartFlushingThreadEvent; // event to starting FlushingThread has been started
+	KEVENT StartFlushingThreadEvent; // event FlushingThread has been started
 	KEVENT StopEvent;   // event to stop TODO!!!
 
 	LONG volatile IsFlushDispatched;
 	//PKDPC pFlushDpc;
+	ULONG FlushBufferSize;
 
 } KLOGGER;
 
@@ -93,8 +93,7 @@ FlushingThreadFunc(
 			DbgPrint("Flushing thread is woken by FLUSH EVENT\n");			
 
 		if (Status == STATUS_TIMEOUT || Status == STATUS_WAIT_0) {
-			Length = FLUSH_BUF_SIZE;
-
+			Length = gKLogger->FlushBufferSize;
 			int Err = RBRead(gKLogger->pRingBuf, gKLogger->pFlushingBuf, &Length);
 			if (Err == ERROR_SUCCESS) {
 				WriteStatus = WriteToFile(gKLogger->FileHandle, gKLogger->pFlushingBuf, Length);
@@ -137,6 +136,7 @@ KLoggerInit(
 	// Initialize the RingBuffer
 	if (bufferSize==0) bufferSize= DEFAULT_RING_BUF_SIZE;
 	Err = RBInit(&(gKLogger->pRingBuf), bufferSize);
+	gKLogger->FlushBufferSize = bufferSize;
 
 	if (Err != ERROR_SUCCESS) {
 		goto err_ring_buf_init;
@@ -157,7 +157,7 @@ KLoggerInit(
 //	KeInitializeDpc(gKLogger->pFlushDpc, SetWriteEvent, NULL);
 
 	// alloc buffer for flushing thread
-	gKLogger->pFlushingBuf = (PCHAR)ExAllocatePool(PagedPool, FLUSH_BUF_SIZE * sizeof(CHAR));
+	gKLogger->pFlushingBuf = (PCHAR)ExAllocatePool(PagedPool, gKLogger->FlushBufferSize * sizeof(CHAR));
 	if (!gKLogger->pFlushingBuf) {
 		Err = ERROR_NOT_ENOUGH_MEMORY;
 		goto err_flush_mem;
@@ -311,7 +311,7 @@ KLoggerLog(
 	IN PCSTR LogMsg
 ) {
 	if (!gKLogger) return ERROR_OBJECT_NO_LONGER_EXISTS;
-
+//#if 0
 	int Err = RBWrite(gKLogger->pRingBuf, LogMsg, StrLen(LogMsg));
 	int LoadFactor = RBLoadFactor(gKLogger->pRingBuf);
 	DbgPrint("Load factor: %d\n", LoadFactor);
@@ -335,4 +335,12 @@ KLoggerLog(
 		}
 	}
 	return Err;
+/* #endif
+	ULONG MessageLength = StrLen(LogMsg);
+	ULONG WrittenLength = 0;
+	while (WrittenLength != MessageLength) {
+		WrittenLength = 
+
+
+	}*/
 }

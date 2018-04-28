@@ -2,6 +2,21 @@
 
 #include <winerror.h>
 
+
+typedef struct RingBuffer {
+	PCHAR pData; // the pointer to the 
+	PCHAR volatile pHead; // the pointer to the next free element
+	PCHAR volatile pTail; // the pointer to the first written element
+
+	ULONG Capacity; // the length of the buffer
+
+	//KSPIN_LOCK SplockTail;
+	//KSPIN_LOCK SplockHead;
+	KSPIN_LOCK SplockWrite; // only one Thread can write at the moment
+	KSPIN_LOCK SpLockRead; // only one Thread can read at the moment
+
+} RINGBUFFER;
+
 INT
 RBInit(
 	PRINGBUFFER* pRingBuf,
@@ -23,20 +38,21 @@ RBInit(
 	*pRingBuf = RingBuf;
 
 
-	RingBuf->Data = (PCHAR)ExAllocatePool(NonPagedPool, Size * sizeof(CHAR));
-	if (!RingBuf->Data) {
+	RingBuf->pData = (PCHAR)ExAllocatePool(NonPagedPool, Size * sizeof(CHAR));
+	if (!RingBuf->pData) {
 		Err = ERROR_NOT_ENOUGH_MEMORY;
 		ExFreePool(RingBuf);
 		goto err_ret;
 	}
 
-	RingBuf->Head = RingBuf->Data;
-	RingBuf->Tail = RingBuf->Data;
+	RingBuf->pHead = RingBuf->pData;
+	RingBuf->pTail = RingBuf->pData;
 	RingBuf->Capacity = Size;
 
-	KeInitializeSpinLock(&(RingBuf->SplockHead));
-	KeInitializeSpinLock(&(RingBuf->SplockTail));
+	//KeInitializeSpinLock(&(RingBuf->SplockHead));
+	//KeInitializeSpinLock(&(RingBuf->SplockTail));
 	KeInitializeSpinLock(&(RingBuf->SplockWrite));
+	KeInitializeSpinLock(&(RingBuf->SpLockRead));
 
 err_ret:
 	return Err;
@@ -50,12 +66,12 @@ RBDeinit(
 		return ERROR_BAD_ARGUMENTS;
 	}
 
-	ExFreePool(pRingBuf->Data);
+	ExFreePool(pRingBuf->pData);
 	ExFreePool(pRingBuf);
 
 	return ERROR_SUCCESS;
 }
-
+/*
 static VOID
 SpinlockExchange(
 	PCHAR* pSrc,
@@ -72,7 +88,7 @@ SpinlockExchange(
 	KeReleaseSpinLockFromDpcLevel(Splock);
 	KeLowerIrql(OldIrql);
 } 
-
+*/
 ULONG
 RBSize(
 	PCHAR Head,
@@ -126,7 +142,7 @@ RingDataWrite(
 	return ERROR_SUCCESS;
 }
 
-INT 
+ULONG 
 RBWrite(
 	PRINGBUFFER pRingBuf, 
 	PCHAR pBuf, 
@@ -141,11 +157,13 @@ RBWrite(
 	KeAcquireSpinLockAtDpcLevel(&(pRingBuf->SplockWrite));
 
 	PCHAR Head, Tail; // get value with spinlock and then use copy
-	SpinlockExchange(&(pRingBuf->Head), &Head, &(pRingBuf->SplockHead));
-	SpinlockExchange(&(pRingBuf->Tail), &Tail, &(pRingBuf->SplockTail));
+	//SpinlockExchange(&(pRingBuf->pHead), &Head, &(pRingBuf->SplockHead));
+	//SpinlockExchange(&(pRingBuf->pTail), &Tail, &(pRingBuf->SplockTail));
+	Head = pRingBuf->pHead;
+	Tail = pRingBuf->pTail;
 
 	int Err;
-	if (Size > RBFreeSize(Head, Tail, pRingBuf->Capacity)) {
+    if (Size > RBFreeSize(Head, Tail, pRingBuf->Capacity)) {
 		Err = ERROR_INSUFFICIENT_BUFFER;
 		goto out;
 	}
@@ -154,7 +172,7 @@ RBWrite(
 	Err = RingDataWrite(
 			pBuf, 
 			Size, 
-			pRingBuf->Data, 
+			pRingBuf->pData, 
 			pRingBuf->Capacity,
 			Head,
 			Tail, 
@@ -164,7 +182,9 @@ RBWrite(
 		goto out;
 	}
 
-	SpinlockExchange(&NewHead, &(pRingBuf->Head), &(pRingBuf->SplockHead));
+	//SpinlockExchange(&NewHead, &(pRingBuf->pHead), &(pRingBuf->SplockHead));
+	pRingBuf->pHead = NewHead;
+
 
 out:
 	KeReleaseSpinLockFromDpcLevel(&(pRingBuf->SplockWrite));
@@ -219,17 +239,24 @@ RBRead(
 		return ERROR_BAD_ARGUMENTS;
 	}
 
+	KIRQL OldIrql;
+	KeRaiseIrql(HIGH_LEVEL, &OldIrql);
+	KeAcquireSpinLockAtDpcLevel(&(pRingBuf->SpLockRead));
+
 	// TODO: res
 	PCHAR Head, Tail; // get value with sync and then use copy
-	SpinlockExchange(&(pRingBuf->Head), &Head, &(pRingBuf->SplockHead));
-	SpinlockExchange(&(pRingBuf->Tail), &Tail, &(pRingBuf->SplockTail));
+	/*SpinlockExchange(&(pRingBuf->pHead), &Head, &(pRingBuf->SplockHead));
+	SpinlockExchange(&(pRingBuf->pTail), &Tail, &(pRingBuf->SplockTail));
+*/
+	Head = pRingBuf->pHead;
+	Tail = pRingBuf->pTail;
 
 	ULONG RetSize;
 	PCHAR NewTail;
 	int Err = RingDataRead(
 				pBuf, 
 				*pSize, 
-				pRingBuf->Data, 
+				pRingBuf->pData, 
 				pRingBuf->Capacity, 
 				Head, 
 				Tail, 
@@ -241,9 +268,12 @@ RBRead(
 	}
 
 	*pSize = RetSize;
-	SpinlockExchange(&NewTail, &(pRingBuf->Tail), &(pRingBuf->SplockTail));
-
+	//SpinlockExchange(&NewTail, &(pRingBuf->pTail), &(pRingBuf->SplockTail));
+	pRingBuf->pTail = NewTail;
 out:
+	KeReleaseSpinLockFromDpcLevel(&(pRingBuf->SpLockRead));
+	KeLowerIrql(OldIrql);
+
 	return Err;
 }
 
@@ -252,8 +282,9 @@ RBLoadFactor(
 	PRINGBUFFER pRingBuf
 ) {
 	PCHAR Head, Tail; // get value with spinlock and then use copy
-	SpinlockExchange(&(pRingBuf->Head), &Head, &(pRingBuf->SplockHead));
-	SpinlockExchange(&(pRingBuf->Tail), &Tail, &(pRingBuf->SplockTail));
-
+	//SpinlockExchange(&(pRingBuf->pHead), &Head, &(pRingBuf->SplockHead));
+	//SpinlockExchange(&(pRingBuf->pTail), &Tail, &(pRingBuf->SplockTail));
+	Head = pRingBuf->pHead;
+	Tail = pRingBuf->pTail;
 	return (INT)(100 * RBSize(Head, Tail, pRingBuf->Capacity)) / pRingBuf->Capacity;
 }
