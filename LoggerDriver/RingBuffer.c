@@ -11,7 +11,6 @@ typedef struct RingBuffer {
 	ULONG Capacity; // the length of the buffer
 
 	KSPIN_LOCK SplockReadWrite; // only one Thread can write at the moment
-//	KSPIN_LOCK SpLockRead; // only one Thread can read at the moment
 
 } RINGBUFFER;
 
@@ -35,7 +34,6 @@ RBInit(
 
 	*pRingBuf = RingBuf;
 
-
 	RingBuf->pData = (PCHAR)ExAllocatePool(NonPagedPool, Size * sizeof(CHAR));
 	if (!RingBuf->pData) {
 		Err = ERROR_NOT_ENOUGH_MEMORY;
@@ -48,7 +46,6 @@ RBInit(
 	RingBuf->Capacity = Size;
 
 	KeInitializeSpinLock(&(RingBuf->SplockReadWrite));
-	//KeInitializeSpinLock(&(RingBuf->SpLockRead));
 
 err_ret:
 	return Err;
@@ -103,7 +100,6 @@ RBWrite(
 	_REF_ PULONG pCharsToWrite
 ) {
 	int Size = *pCharsToWrite;
-	DbgPrint("RBWrite Size=%d , pBuf=%s\n", Size, pBuf);
 	int Err = ERROR_SUCCESS;
 
 	if (!pRingBuf) {
@@ -125,8 +121,6 @@ RBWrite(
 	} else {
 		*pCharsToWrite = 0;
 	}
-
-	DbgPrint("RBWrite FreeBuf=%d , NewSize= %d, *pCharToWrite=%d\n", FreeBuf, Size, *pCharsToWrite);
 
 	PCHAR NewHead;
 	
@@ -166,11 +160,7 @@ RBRead(
 		Result = ERROR_BAD_ARGUMENTS;
 		goto out;
 	}
-	/*
-	KIRQL OldIrql;
-	KeRaiseIrql(HIGH_LEVEL, &OldIrql);
-	KeAcquireSpinLockAtDpcLevel(&(pRingBuf->SplockReadWrite));*/
-
+	
 	PCHAR Head = pRingBuf->pHead;
 	PCHAR Tail = pRingBuf->pTail;
 
@@ -201,8 +191,6 @@ RBRead(
 	*pSize = RetSize;
 	pRingBuf->pTail = NewTail;
 out:
-	/*KeReleaseSpinLockFromDpcLevel(&(pRingBuf->SplockReadWrite));
-	KeLowerIrql(OldIrql);*/
 	return Result;
 }
 

@@ -1,12 +1,16 @@
 #include <WinError.h>
+#include "MyNtstrsafe.h"
 #include "RingBuffer.h"
 #include "KLogger.h"
 
-#define FLUSH_THRESHOLD 50u // in percents
-#define DEFAULT_RING_BUF_SIZE (100ull * 1024ull * 1024ull) // only if it is not derectly given
-#define REGISTRY_BUF_SIZE_KEY L"BUF_SIZE"
-#define FLUSH_TIMEOUT 10000000ll
-#define START_TIMEOUT 50000000ll
+
+/*
+* Level of saved messages
+*/
+
+#define LOG_LEVEL_ERROR 0
+#define LOG_LEVEL_DEBUG 1
+#define LOG_LEVEL_TRACE 2
 
 typedef struct KLogger
 {
@@ -15,29 +19,27 @@ typedef struct KLogger
 	HANDLE FileHandle; // file Handle for writing
 	PCHAR pFlushingBuf; // flushing Buffer
 
-	HANDLE FlushingThreadHandle; 
-	PKTHREAD pFlushingThread;
+	HANDLE FlushingThreadHandle; // Flushing thread handle
+	PKTHREAD pFlushingThread;    // Pointer to Flushing thread 
 
 	KEVENT FlushEvent;  // event to flash data to file
 	KEVENT StartFlushingThreadEvent; // event FlushingThread has been started
 	KEVENT StopEvent;   // event to stop flushing thread
+	KEVENT FlushingIsDone; // event to continue writing long message 
 
-	LONG volatile IsFlushDispatched;
-	//PKDPC pFlushDpc;
-	ULONG FlushBufferSize;
-	KEVENT FlushingIsDone;
-	//KSPIN_LOCK SpLockLog;
+	LONG volatile IsFlushDispatched; // Is Flush already dispatched 
+	ULONG FlushBufferSize;           
 
+	LARGE_INTEGER TimeoutFlash; 
+
+	INT LogLevel;
+	INT LogDetails;
+	
 } KLOGGER;
 
-PKLOGGER gKLogger;
+typedef struct KLogger* PKLOGGER;
 
-VOID SetWriteEvent(
-	IN PKDPC pthisDpcObject,
-	IN PVOID DeferredContext,
-	IN PVOID SystemArgument1,
-	IN PVOID SystemArgument2
-);
+PKLOGGER gKLogger;
 
 static INT 
 WriteToFile(
@@ -72,8 +74,6 @@ FlushingThreadFunc(
 	handles[0] = (PVOID)&(gKLogger->FlushEvent);
 	handles[1] = (PVOID)&(gKLogger->StopEvent);
 
-	LARGE_INTEGER Timeout;
-	Timeout.QuadPart = -FLUSH_TIMEOUT;
 
 	NTSTATUS Status, WriteStatus;
 	ULONG Length = 0;
@@ -85,7 +85,7 @@ FlushingThreadFunc(
 			Executive,
 			KernelMode,
 			TRUE,
-			&Timeout,
+			&gKLogger->TimeoutFlash,
 			NULL);
 
 		if (Status == STATUS_TIMEOUT)
@@ -117,14 +117,12 @@ FlushingThreadFunc(
 		if (Status == STATUS_WAIT_1) {
 			PsTerminateSystemThread(ERROR_SUCCESS); // exit
 		}
-
-		
 	}
 }
  
 INT 
 KLoggerInit(
-	IN PUNICODE_STRING fileName,
+	IN PUNICODE_STRING pFileName,
 	IN ULONG bufferSize
 ) {
 	int Err = ERROR_SUCCESS;
@@ -135,8 +133,7 @@ KLoggerInit(
 		Err = ERROR_NOT_ENOUGH_MEMORY;
 		goto err_klogger_mem;
 	}
-
-	//KeInitializeSpinLock(&(gKLogger->SpLockLog));
+	
 
 	// Initialize the RingBuffer
 	if (bufferSize==0) bufferSize= DEFAULT_RING_BUF_SIZE;
@@ -146,14 +143,19 @@ KLoggerInit(
 	if (Err != ERROR_SUCCESS) {
 		goto err_ring_buf_init;
 	}
+	
+	gKLogger->TimeoutFlash.QuadPart = -DEFAULT_FLUSH_TIMEOUT;
 
-	// Initialize 
+	// Initialize Events
 	KeInitializeEvent(&(gKLogger->FlushEvent), SynchronizationEvent, FALSE);
 	KeInitializeEvent(&(gKLogger->StartFlushingThreadEvent), SynchronizationEvent, FALSE);
 	KeInitializeEvent(&(gKLogger->StopEvent), SynchronizationEvent, FALSE);
 	KeInitializeEvent(&(gKLogger->FlushingIsDone), SynchronizationEvent, FALSE);
 
+	// Initializing 
 	gKLogger->IsFlushDispatched = 0;
+	gKLogger->LogLevel = DEFAULT_LOG_LEVEL;
+	gKLogger->LogDetails = DEFAULT_LOG_DETAILS;
 
 	// alloc buffer for flushing thread
 	gKLogger->pFlushingBuf = (PCHAR)ExAllocatePool(PagedPool, gKLogger->FlushBufferSize * sizeof(CHAR));
@@ -162,14 +164,23 @@ KLoggerInit(
 		goto err_flush_mem;
 	}
 
-
 	// open file for flushing thread
 	OBJECT_ATTRIBUTES ObjAttr;
 	IO_STATUS_BLOCK IoStatusBlock;
+	
+	UNICODE_STRING FileNameFinal; 
 
+	if (!pFileName) {
+		RtlInitUnicodeString(&FileNameFinal, DEFAULT_FILE_NAME);
+	}
+	else 
+	{
+		FileNameFinal = *pFileName;
+	}
+	
 	InitializeObjectAttributes(
 		&ObjAttr,
-		fileName,
+		&FileNameFinal,
 		OBJ_CASE_INSENSITIVE | OBJ_KERNEL_HANDLE,
 		NULL,
 		NULL
@@ -218,6 +229,7 @@ KLoggerInit(
 
 	// wait while flushing thread start
 	LARGE_INTEGER Timeout;
+	#define START_TIMEOUT 50000000ll
 	Timeout.QuadPart = -START_TIMEOUT;
 
 	KeWaitForSingleObject(
@@ -278,10 +290,14 @@ StrLen(
 	ULONG Length = 0;
 	while (*(Str + Length) != '\0') {
 		Length++;
+		if (Length == 2000000000) {
+			return  0; //Error - not a zero end string
+		}
 	}
 	return Length;
 }
 
+static
 INT 
 KLoggerLog(
 	IN PCSTR LogMsg
@@ -291,24 +307,18 @@ KLoggerLog(
 	ULONG OldMessageLength = StrLen(LogMsg);
 	ULONG MessageLength = OldMessageLength;
 	INT Err = ERROR_SUCCESS;
-	////Get Spinlock to prevent concurent logging
-	//KIRQL OldIrql;
-	//KeRaiseIrql(HIGH_LEVEL, &OldIrql);
-	//KeAcquireSpinLockAtDpcLevel(&(gKLogger->SpLockLog));
 
 	while (MessageLength != 0) {
 		DbgPrint("Try to write length=%d\n", MessageLength);
+		
 		Err = RBWrite(gKLogger->pRingBuf, LogMsg, &MessageLength);
 		DbgPrint("Still has to write length=%d\n", MessageLength);
-
 
 		int LoadFactor = RBLoadFactor(gKLogger->pRingBuf);
 		DbgPrint("Load factor: %d\n", LoadFactor);
 
 		if (LoadFactor >= FLUSH_THRESHOLD) {
-			//DbgPrint("Pre Interlocked: is flush dpc queued: %d", gKLogger->IsFlushDispatched);
 			LONG isFluchDispatched = InterlockedCompareExchange(&(gKLogger->IsFlushDispatched), 1, 0);
-			//DbgPrint("Post Interlocked original value: %d, is flush dpc queued: %d", OrigDst, gKLogger->IsFlushDispatched);
 			if (!isFluchDispatched) {
 				DbgPrint("Try to use FlashEvent\n");
 				InterlockedExchange(&(gKLogger->IsFlushDispatched), 0);
@@ -332,11 +342,123 @@ KLoggerLog(
 				NULL); // TODO ERROR TIMEOUT 
 			KeClearEvent(&gKLogger->FlushingIsDone);
 		}
-
 	}
-
-	/*KeReleaseSpinLockFromDpcLevel(&(gKLogger->SpLockLog));
-	KeLowerIrql(OldIrql);
-	*/
 	return Err;
+}
+
+static 
+void  
+checkStamping(
+_REF_ PBOOLEAN TimePrint, 
+_REF_ PBOOLEAN LevelPrint, 
+IN    PBOOLEAN size, 
+_REF_ PBOOLEAN newSize
+){
+#define TIME_STAMP_SIZE 30
+#define LEVEL_STAMP_SIZE 10
+	switch (gKLogger->LogDetails) {
+	case LOG_DETAILS_NO:
+		break;
+	case LOG_DETAILS_TIME:
+		*TimePrint = TRUE;
+		*newSize = *size + TIME_STAMP_SIZE;
+		break;
+	case LOG_DETAILS_MESSAGELEVEL:
+		*LevelPrint = TRUE;
+		*newSize = *size + LEVEL_STAMP_SIZE;
+		break;
+	case LOG_DETAILS_TIME_MESSAGELEVEL:
+		*TimePrint = TRUE;
+		*LevelPrint = TRUE;
+		*newSize = *size + LEVEL_STAMP_SIZE + TIME_STAMP_SIZE;
+		break;
+	}
+}
+
+static
+INT
+KLoggerLogDetails(
+	IN  PCSTR LogMsg,
+	IN  PCSTR LevelStamp ) 
+{
+	INT Result=0;
+	BOOLEAN TimePrint = FALSE;
+	BOOLEAN LevelPrint = FALSE;
+	size_t size = StrLen(LogMsg); 
+	size_t newSize = 0;
+	checkStamping(&TimePrint, &LevelPrint, &size, &newSize);
+
+	if (TimePrint || LevelPrint) {
+		PCHAR FullMessage = (PCHAR)ExAllocatePool(PagedPool, newSize * sizeof(CHAR));
+		PCHAR ZeroMessage = "";
+		RtlStringCbCopyA(FullMessage, newSize, ZeroMessage);
+		if (TimePrint) {
+			char timeStr[40];
+			TIME_FIELDS TimeFields;
+			LARGE_INTEGER time;
+			KeQuerySystemTime(&time);
+			ExSystemTimeToLocalTime(&time, &time);
+			RtlTimeToTimeFields(&time, &TimeFields);
+			RtlStringCbPrintfA(timeStr, sizeof(timeStr), "[%04d.%02d.%02d - %02d:%02d]",
+				TimeFields.Year, TimeFields.Month, TimeFields.Day,
+				TimeFields.Hour, TimeFields.Minute);
+			RtlStringCbCatA(FullMessage, newSize, timeStr);
+		}
+		if (LevelPrint) {
+			RtlStringCbCatA(FullMessage, newSize, LevelStamp);
+		}
+		RtlStringCbCatA(FullMessage, newSize, LogMsg);
+		Result = KLoggerLog(FullMessage);
+		DbgPrint("New Message:  %s\n", FullMessage);
+		ExFreePool(FullMessage);
+	}
+	else
+	{
+		Result = KLoggerLog(LogMsg);
+	}
+	return Result;
+}
+
+
+VOID KLoggerSetFlashTimeout(IN INT Seconds)
+{
+	gKLogger->TimeoutFlash.QuadPart = - Seconds * ONE_SECOND_TIMEOUT;
+}
+
+VOID KLoggerSetLevel(IN INT LogLevel)
+{
+	if (LogLevel >= LOG_LEVEL_ERROR && LogLevel <= LOG_LEVEL_TRACE)
+		gKLogger->LogLevel = LogLevel;
+}
+
+VOID KLoggerSetDetails(IN INT LogDetails)
+{
+	if (LogDetails >= LOG_DETAILS_NO && LogDetails <= LOG_DETAILS_TIME_MESSAGELEVEL)
+		gKLogger->LogDetails = LogDetails;
+}
+
+
+INT KLoggerLogError(IN PCSTR log_msg)
+{	
+	INT result = ERROR_SUCCESS;
+	if (gKLogger->LogLevel >= LOG_LEVEL_ERROR)
+		result = KLoggerLogDetails(log_msg, "[ERROR]");
+	return result;
+}	
+
+
+INT KLoggerLogDebug(IN PCSTR log_msg)
+{
+	INT result = ERROR_SUCCESS;
+	if (gKLogger->LogLevel >= LOG_LEVEL_DEBUG)
+		result = KLoggerLogDetails(log_msg, "[DEBUG]");
+	return result;
+}
+
+INT KLoggerLogTrace(IN PCSTR log_msg)
+{
+	INT result = ERROR_SUCCESS;
+	if (gKLogger->LogLevel >= LOG_LEVEL_TRACE)
+		result = KLoggerLogDetails(log_msg, "[TRACE]");
+	return result;
 }

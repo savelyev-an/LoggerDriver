@@ -3,10 +3,9 @@
 #include "ntddk.h"
 
 #define _REF_ // marked input&output param in method 
-
-
-
-
+/*
+* RingBuffer is a part of the KLogger
+*/
 typedef struct RingBuffer* PRINGBUFFER;
 
 INT RBInit(IN PRINGBUFFER* pRingBuf, IN ULONG Size);

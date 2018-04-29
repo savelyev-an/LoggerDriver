@@ -18,16 +18,8 @@ VOID DriverUnload(
 	_In_ struct _DRIVER_OBJECT *DriverObject
 );
 
-
-VOID ThreadFunc(
-	IN PVOID _Unused
-) {
-
-	UNREFERENCED_PARAMETER(_Unused);
-
-	PCHAR Message[] = {
+PCHAR Message[] = {
 	"Very Long Message 123456789012345678901234567890123456789012345678901234567890\r\n",
-	//"[klogtest 1]: curIRQL == 0\r\n",
 	"[klogtest 1]: curIRQL == 1\r\n",
 	"[klogtest 1]: curIRQL == 2\r\n",
 	"[klogtest 1]: curIRQL == 3\r\n",
@@ -43,13 +35,31 @@ VOID ThreadFunc(
 	"[klogtest 1]: curIRQL == 13\r\n",
 	"[klogtest 1]: curIRQL == 14\r\n",
 	"[klogtest 1]: curIRQL == 15\r\n"
-	};
+};
 
+
+VOID ThreadFunc(
+	IN PVOID _Unused
+) {
+	UNREFERENCED_PARAMETER(_Unused);
 	
-	DbgPrint("1 Fast path: DPC flushing first part of messages");
+	DbgPrint("Set Log Level = ERROR \n");
+	KLoggerSetLevel(LOG_LEVEL_ERROR);
+	DbgPrint("Log Message ERROR \n");
+	KLoggerLogError("Log Message ERROR \r\n");
+	DbgPrint("Log Message DEBUG \n");
+	KLoggerLogDebug("Log Message DEBUG \r\n");
+	KLoggerSetLevel(LOG_LEVEL_TRACE);
+
+
+#if 1
+	DbgPrint("1 Fast path: flushing by the buffer free space");
+	
+	// default level details
+	// set timeout 10 sec, 
+	KLoggerSetFlashTimeout(10);		
+
 	KIRQL StartIrql = KeGetCurrentIrql();
-	
-	//__debugbreak();
 
 	for (KIRQL curIrql = StartIrql; curIrql <= HIGH_LEVEL; ++curIrql) {
 
@@ -57,31 +67,32 @@ VOID ThreadFunc(
 
 		KIRQL _OldIrql;
 		KeRaiseIrql(curIrql, &_OldIrql);
-		INT LogStat = KLoggerLog(Message[curIrql]);
+		INT LogStat = KLoggerLogTrace(Message[curIrql]);
 		DbgPrint("[klogtest 1]: curIRQL == %d, status: %d, message: %s", 
 			curIrql, 
 			LogStat,
 			Message[curIrql]
 		);
-
 		KeLowerIrql(StartIrql);
 	}
-#if 1
+
+
 	LARGE_INTEGER DueTime;
-	DueTime.QuadPart = -10000000LL;	// 10^7 * 100us = 1; relative value
+	DueTime.QuadPart = -ONE_SECOND_TIMEOUT;	// 10^7 * 100us = 1; relative value
 	LARGE_INTEGER	Interval;
-#define FLUSH_TIMEOUT 10000000ll
-	Interval.QuadPart = -2 * FLUSH_TIMEOUT;
+	Interval.QuadPart = -2 * ONE_SECOND_TIMEOUT;
 
 	KeDelayExecutionThread(KernelMode, FALSE, &Interval);
-	DbgPrint("1 ...\n");
-	DbgPrint("1 ...\n");
-	DbgPrint("1 Slow path: TIMEOUT flushing all messages\n");
+	DbgPrint("2 Slow path: TIMEOUT flushing all messages\n");
+	// set no details
+	KLoggerSetDetails(LOG_DETAILS_NO);
+	// set timeout 1 sec
+	KLoggerSetFlashTimeout(1);				
 
 	for (KIRQL curIrql = StartIrql; curIrql <= HIGH_LEVEL; ++curIrql) {
 		KIRQL _OldIrql;
 		KeRaiseIrql(curIrql, &_OldIrql);
-		INT LogStat = KLoggerLog(Message[curIrql]);
+		INT LogStat = KLoggerLogTrace(Message[curIrql]);
 		DbgPrint("[klogtest 1]: curIRQL == %d, status: %d, message: %s",
 			curIrql,
 			LogStat,
@@ -94,15 +105,14 @@ VOID ThreadFunc(
 
 	KeDelayExecutionThread(KernelMode, FALSE, &Interval);
 
-
-	DbgPrint("1 ...");
-	DbgPrint("1 ...");
-	DbgPrint("1 Combined path: DPC (1.9 msg) and TIMEOUT (1.1 msg) flushing messages");
+	// set no details
+	KLoggerSetDetails(LOG_DETAILS_MESSAGELEVEL);
+	DbgPrint("3 Combined path: DPC (1.9 msg) and TIMEOUT (1.1 msg) flushing messages");
 
 	for (KIRQL curIrql = StartIrql; curIrql <= HIGH_LEVEL; ++curIrql) {
 		KIRQL _OldIrql;
 		KeRaiseIrql(curIrql, &_OldIrql);
-		INT LogStat = KLoggerLog(Message[curIrql]);
+		INT LogStat = KLoggerLogTrace(Message[curIrql]);
 		DbgPrint("[klogtest 1]: curIRQL == %d, status: %d, message: %s",
 			curIrql,
 			LogStat,
@@ -126,9 +136,11 @@ DriverEntry(
 	UNREFERENCED_PARAMETER(RegistryPath);
 	
 	
-	UNICODE_STRING fileName;  ;
-	RtlInitUnicodeString(&fileName, L"\\??\\C:\\drivers\\klogger.log");
-	KLoggerInit(&fileName, 50);
+	//UNICODE_STRING fileName;  ;
+	//RtlInitUnicodeString(&fileName, L"\\??\\C:\\drivers\\klogger.log");
+	//KLoggerInit(&fileName, 50);
+	KLoggerInit(NULL, 50);
+
 
 	DbgPrint("[test_driver_1]: 'DriverEntry()' is executed");
 	DriverObject->DriverUnload = DriverUnload;
