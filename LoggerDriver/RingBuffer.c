@@ -10,7 +10,7 @@ typedef struct RingBuffer {
 
 	ULONG Capacity; // the length of the buffer
 
-	KSPIN_LOCK SplockWrite; // only one Thread can write at the moment
+	KSPIN_LOCK SplockReadWrite; // only one Thread can write at the moment
 //	KSPIN_LOCK SpLockRead; // only one Thread can read at the moment
 
 } RINGBUFFER;
@@ -47,7 +47,7 @@ RBInit(
 	RingBuf->pTail = RingBuf->pData;
 	RingBuf->Capacity = Size;
 
-	KeInitializeSpinLock(&(RingBuf->SplockWrite));
+	KeInitializeSpinLock(&(RingBuf->SplockReadWrite));
 	//KeInitializeSpinLock(&(RingBuf->SpLockRead));
 
 err_ret:
@@ -90,15 +90,20 @@ RBFreeSize(
 	IN ULONG Capacity
 
 ) {
-	return Capacity - RBSize(Head, Tail, Capacity);
+	return Capacity - RBSize(Head, Tail, Capacity)-1; // minus 1 to be sure that if Head=Tail => RingBuffer is empty
 }
 
+/*
+* Fuction return amount of unwritten chars
+*/
 ULONG 
 RBWrite(
 	_REF_ PRINGBUFFER pRingBuf, 
 	IN PCHAR pBuf, 
-	IN ULONG Size
+	_REF_ PULONG pCharsToWrite
 ) {
+	int Size = *pCharsToWrite;
+	DbgPrint("RBWrite Size=%d , pBuf=%s\n", Size, pBuf);
 	int Err = ERROR_SUCCESS;
 
 	if (!pRingBuf) {
@@ -108,15 +113,20 @@ RBWrite(
 
 	KIRQL OldIrql;
 	KeRaiseIrql(HIGH_LEVEL, &OldIrql);
-	KeAcquireSpinLockAtDpcLevel(&(pRingBuf->SplockWrite));
+	KeAcquireSpinLockAtDpcLevel(&(pRingBuf->SplockReadWrite));
 
 	PCHAR Head = pRingBuf->pHead;
 	PCHAR Tail = pRingBuf->pTail;
 
-    if (Size > RBFreeSize(Head, Tail, pRingBuf->Capacity) ){
-		Err = ERROR_INSUFFICIENT_BUFFER;
-		goto out;
+	INT FreeBuf = RBFreeSize(Head, Tail, pRingBuf->Capacity);
+	if (Size > FreeBuf){
+		Size = FreeBuf;
+		*pCharsToWrite = *pCharsToWrite - Size;
+	} else {
+		*pCharsToWrite = 0;
 	}
+
+	DbgPrint("RBWrite FreeBuf=%d , NewSize= %d, *pCharToWrite=%d\n", FreeBuf, Size, *pCharsToWrite);
 
 	PCHAR NewHead;
 	
@@ -126,29 +136,25 @@ RBWrite(
 			RtlCopyMemory(Head, pBuf, DistToFinish);
 			RtlCopyMemory(pRingBuf->pData, pBuf + DistToFinish, Size - DistToFinish);
 			NewHead = pRingBuf->pData + Size - DistToFinish;
-		}
-		else {
-			RtlCopyMemory(pRingBuf->pHead, pBuf, Size);
+		} else {
+			RtlCopyMemory(Head, pBuf, Size);
 			NewHead = Head + Size;
 		}
 
-	}
-	else {
+	} else {
 		RtlCopyMemory(Head, pBuf, Size);
 		NewHead = Head + Size;
 	}
-
-		pRingBuf->pHead = NewHead;
+	pRingBuf->pHead = NewHead;
 
 out:
-	KeReleaseSpinLockFromDpcLevel(&(pRingBuf->SplockWrite));
+	KeReleaseSpinLockFromDpcLevel(&(pRingBuf->SplockReadWrite));
 	KeLowerIrql(OldIrql);
 
 	return Err;
 }
 
 
-// there is only one reader - fluhsing thread -> no sync
 INT 
 RBRead(
 	_REF_ PRINGBUFFER pRingBuf, 
@@ -160,7 +166,11 @@ RBRead(
 		Result = ERROR_BAD_ARGUMENTS;
 		goto out;
 	}
-	
+	/*
+	KIRQL OldIrql;
+	KeRaiseIrql(HIGH_LEVEL, &OldIrql);
+	KeAcquireSpinLockAtDpcLevel(&(pRingBuf->SplockReadWrite));*/
+
 	PCHAR Head = pRingBuf->pHead;
 	PCHAR Tail = pRingBuf->pTail;
 
@@ -191,7 +201,8 @@ RBRead(
 	*pSize = RetSize;
 	pRingBuf->pTail = NewTail;
 out:
-	
+	/*KeReleaseSpinLockFromDpcLevel(&(pRingBuf->SplockReadWrite));
+	KeLowerIrql(OldIrql);*/
 	return Result;
 }
 

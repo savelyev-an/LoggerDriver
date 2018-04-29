@@ -26,7 +26,8 @@ VOID ThreadFunc(
 	UNREFERENCED_PARAMETER(_Unused);
 
 	PCHAR Message[] = {
-	"[klogtest 1]: curIRQL == 0\r\n",
+	"Very Long Message 123456789012345678901234567890123456789012345678901234567890\r\n",
+	//"[klogtest 1]: curIRQL == 0\r\n",
 	"[klogtest 1]: curIRQL == 1\r\n",
 	"[klogtest 1]: curIRQL == 2\r\n",
 	"[klogtest 1]: curIRQL == 3\r\n",
@@ -51,7 +52,7 @@ VOID ThreadFunc(
 	//__debugbreak();
 
 	for (KIRQL curIrql = StartIrql; curIrql <= HIGH_LEVEL; ++curIrql) {
-		
+
 		DbgPrint("curIrql = %d",curIrql);
 
 		KIRQL _OldIrql;
@@ -65,7 +66,7 @@ VOID ThreadFunc(
 
 		KeLowerIrql(StartIrql);
 	}
-
+#if 1
 	LARGE_INTEGER DueTime;
 	DueTime.QuadPart = -10000000LL;	// 10^7 * 100us = 1; relative value
 	LARGE_INTEGER	Interval;
@@ -112,7 +113,7 @@ VOID ThreadFunc(
 		if (curIrql % 3 == 0)
 			KeDelayExecutionThread(KernelMode, FALSE, &Interval);
 	}
-
+#endif
 	PsTerminateSystemThread(ERROR_SUCCESS);
 }
 
