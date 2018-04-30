@@ -10,7 +10,7 @@ typedef struct RingBuffer {
 
 	ULONG Capacity; // the length of the buffer
 
-	KSPIN_LOCK SplockReadWrite; // only one Thread can write at the moment
+	KSPIN_LOCK SplockWrite; // only one Thread can write at the moment
 
 } RINGBUFFER;
 
@@ -45,7 +45,7 @@ RBInit(
 	RingBuf->pTail = RingBuf->pData;
 	RingBuf->Capacity = Size;
 
-	KeInitializeSpinLock(&(RingBuf->SplockReadWrite));
+	KeInitializeSpinLock(&(RingBuf->SplockWrite));
 
 err_ret:
 	return Err;
@@ -79,6 +79,18 @@ RBSize(
 	}
 }
 
+ULONG RBLength(
+	IN PRINGBUFFER pRingBuf
+) {
+	KIRQL OldIrql;
+	KeRaiseIrql(HIGH_LEVEL, &OldIrql);
+	KeAcquireSpinLockAtDpcLevel(&(pRingBuf->SplockWrite));
+	ULONG Result = RBSize(pRingBuf->pHead, pRingBuf->pTail, pRingBuf->Capacity);
+	KeReleaseSpinLockFromDpcLevel(&(pRingBuf->SplockWrite));
+	KeLowerIrql(OldIrql);
+	return Result;
+}
+
 
 static ULONG
 RBFreeSize(
@@ -109,7 +121,7 @@ RBWrite(
 
 	KIRQL OldIrql;
 	KeRaiseIrql(HIGH_LEVEL, &OldIrql);
-	KeAcquireSpinLockAtDpcLevel(&(pRingBuf->SplockReadWrite));
+	KeAcquireSpinLockAtDpcLevel(&(pRingBuf->SplockWrite));
 
 	PCHAR Head = pRingBuf->pHead;
 	PCHAR Tail = pRingBuf->pTail;
@@ -142,7 +154,7 @@ RBWrite(
 	pRingBuf->pHead = NewHead;
 
 out:
-	KeReleaseSpinLockFromDpcLevel(&(pRingBuf->SplockReadWrite));
+	KeReleaseSpinLockFromDpcLevel(&(pRingBuf->SplockWrite));
 	KeLowerIrql(OldIrql);
 
 	return Err;

@@ -17,19 +17,18 @@ typedef struct KLogger
 	PRINGBUFFER pRingBuf; // the RingBuffer
 
 	HANDLE FileHandle; // file Handle for writing
-	PCHAR pFlushingBuf; // flushing Buffer  =============================== TO REMOVE!
+	PCHAR pFlushingBuf; // flushing Buffer
 
 	HANDLE FlushingThreadHandle; // Flushing thread handle
 	PKTHREAD pFlushingThread;    // Pointer to Flushing thread 
 
-	KEVENT FlushEvent;  // use to force the flashing from ring Buffer dut to capacity
-	KEVENT StartFlushingThreadEvent; // use to wait the init Thread till the Flushing Thread will start 
-	KEVENT StopEvent;   // use to stop the flashing thread in case of stop the KLogger
-	KEVENT FlushingIsDone; // use to continue writing long message after flashing the Ring Buffer
-	PKDPC  pFileWriteDpc; 
+	KEVENT FlushEvent;  // event to flash data to file
+	KEVENT StartFlushingThreadEvent; // event FlushingThread has been started
+	KEVENT StopEvent;   // event to stop flushing thread
+	KEVENT FlushingIsDone; // event to continue writing long message 
 
-	LONG volatile IsFlushDispatched; // Is Flush already dispatched ================================== TO REMOVE
-	ULONG FlushBufferSize;           // flushing Buffer  =============================== TO REMOVE! FIND DEFAULT AND SO ON!
+	LONG volatile IsFlushDispatched; // Is Flush already dispatched 
+	ULONG FlushBufferSize;           
 
 	LARGE_INTEGER TimeoutFlash; 
 
@@ -40,63 +39,17 @@ typedef struct KLogger
 
 typedef struct KLogger* PKLOGGER;
 
-/*
-* The main global KLogger object
-*/
 PKLOGGER gKLogger;
 
-/*
-* Disptched Procedure
-*/
-static
-VOID WriteToFileDP(  // ========================= To replace  WriteToFile
-	IN PKDPC pthisDpcObject,
-	IN PVOID DeferredContext,
-	IN PVOID pBuf,
-	IN PVOID pLength
-) {
-	UNREFERENCED_PARAMETER(pthisDpcObject);
-	UNREFERENCED_PARAMETER(DeferredContext);
-	__debugbreak();
-	DbgPrint("Start  WriteToFileDP \n");
-
-	ULONG len = *(PULONG)pLength;
-	PCHAR pChars = (PCHAR)pBuf;
-	DbgPrint("Len= %d message=&s \n", len, pChars);
-	__debugbreak();
-#if 0
-
-
-	IO_STATUS_BLOCK IoStatusBlock;
-	NTSTATUS Status = ZwWriteFile(
-		gKLogger->FileHandle,
-		NULL,
-		NULL,
-		NULL,
-		&IoStatusBlock,
-		pBuf,
-	//	(ULONG)*(PULONG)pLength,
-		37,
-		NULL,
-		NULL
-	);
-	DbgPrint("Finish  WriteToFileDP, status=> %s \n", Status);
-	// Release memory from temporary Pools
-	ExFreePool(pBuf);
-	ExFreePool(pLength);
-#endif
-}
-
-
 static INT 
-WriteToFile( //======================================== TOREMOVE
+WriteToFile(
 	IN HANDLE FileHandle,
 	IN PVOID Buf, 
 	IN ULONG Length
 ) {
 	IO_STATUS_BLOCK IoStatusBlock;
 	NTSTATUS Status = ZwWriteFile(
-		gKLogger->FileHandle,
+		FileHandle,
 		NULL,
 		NULL,
 		NULL,
@@ -124,7 +77,6 @@ FlushingThreadFunc(
 
 	NTSTATUS Status, WriteStatus;
 	ULONG Length = 0;
-	ULONG RBFillLength = 0;
 	while (TRUE) {
 		Status = KeWaitForMultipleObjects(
 			2,
@@ -148,31 +100,7 @@ FlushingThreadFunc(
 			KeClearEvent(&gKLogger->StopEvent);
 			DbgPrint("Flushing thread is woken by STOP EVENT\n");
 		}
-		/*
-		* 1) Читаем сколько длину в Ring Buf
-		* 2) Создаем бууфер
-		* 3) Читаем в него из RB
-		* 4) Отдаем команду в Queue
-		*/
-		
-		ULONG RBFillLength = RBLength(gKLogger->pRingBuf);
-		if (RBFillLength>0)
-		{
-			PULONG pRBFillLength = (PULONG)ExAllocatePool(PagedPool, sizeof(PULONG)); // this Poll is released in WriteToFileDP
-			PCHAR pTempBuf = (PCHAR)ExAllocatePool(PagedPool, RBFillLength * sizeof(CHAR)); // this Poll is released in WriteToFileDP
-			*pRBFillLength = RBFillLength;
-			int Err = RBRead(gKLogger->pRingBuf, pTempBuf, pRBFillLength);
-			if (Err == ERROR_SUCCESS) 
-			{
-				// TODO Добавить ожидание завершения записи, если уже есть в очереди...
-				KeInsertQueueDpc(gKLogger->pFileWriteDpc, pTempBuf, pRBFillLength); 
-			}
-			else 
-			{
-				DbgPrint("Error: can't read from ring_buffer, return code %d\n", Err);
-			}
-		}
-		/*
+
 		Length = gKLogger->FlushBufferSize;
 		int Err = RBRead(gKLogger->pRingBuf, gKLogger->pFlushingBuf, &Length);
 		if (Err == ERROR_SUCCESS) {
@@ -183,7 +111,7 @@ FlushingThreadFunc(
 		} else {
 			DbgPrint("Error: can't read from ring_buffer, return code %d\n", Err);
 		}
-		*/
+
 		KeSetEvent(&(gKLogger->FlushingIsDone), 0, FALSE);
 
 		if (Status == STATUS_WAIT_1) {
@@ -223,13 +151,6 @@ KLoggerInit(
 	KeInitializeEvent(&(gKLogger->StartFlushingThreadEvent), SynchronizationEvent, FALSE);
 	KeInitializeEvent(&(gKLogger->StopEvent), SynchronizationEvent, FALSE);
 	KeInitializeEvent(&(gKLogger->FlushingIsDone), SynchronizationEvent, FALSE);
-	gKLogger->pFileWriteDpc = (PKDPC)ExAllocatePool(NonPagedPool, sizeof(KDPC));
-	if (!gKLogger->pFileWriteDpc) {
-		Err = ERROR_NOT_ENOUGH_MEMORY;
-		goto err_dpc_mem;
-	}
-	
-	KeInitializeDpc(gKLogger->pFileWriteDpc, WriteToFileDP, NULL);
 
 	// Initializing 
 	gKLogger->IsFlushDispatched = 0;
@@ -325,8 +246,7 @@ err_thread:
 
 err_file:
 	ExFreePool(gKLogger->pFlushingBuf);
-err_dpc_mem:
-	ExFreePool(gKLogger->pFileWriteDpc);
+
 err_flush_mem:
 	RBDeinit(gKLogger->pRingBuf);
 
@@ -357,8 +277,6 @@ KLoggerDeinit() {
 
 	ExFreePool(gKLogger->pFlushingBuf);
 	ZwClose(gKLogger->FileHandle);
-
-	ExFreePool(gKLogger->pFileWriteDpc);
 
 	RBDeinit(gKLogger->pRingBuf);
 	ExFreePool(gKLogger);

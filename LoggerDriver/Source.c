@@ -52,7 +52,7 @@ VOID ThreadFunc(
 	KLoggerSetLevel(LOG_LEVEL_TRACE);
 
 
-#if 1
+#if 0
 	DbgPrint("1 Fast path: flushing by the buffer free space");
 	
 	// default level details
@@ -75,8 +75,8 @@ VOID ThreadFunc(
 		);
 		KeLowerIrql(StartIrql);
 	}
-
-
+#endif
+#if 0
 	LARGE_INTEGER DueTime;
 	DueTime.QuadPart = -ONE_SECOND_TIMEOUT;	// 10^7 * 100us = 1; relative value
 	LARGE_INTEGER	Interval;
