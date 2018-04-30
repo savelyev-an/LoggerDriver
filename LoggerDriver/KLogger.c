@@ -126,7 +126,7 @@ KLoggerInit(
 	IN ULONG bufferSize
 ) {
 	int Err = ERROR_SUCCESS;
-
+	__debugbreak();
 	// allocate memory for the LoggerStructure
 	gKLogger = (PKLOGGER)ExAllocatePool(NonPagedPool, sizeof(KLOGGER));
 	if (gKLogger == NULL) {
@@ -282,7 +282,9 @@ KLoggerDeinit() {
 	ExFreePool(gKLogger);
 }
 
-
+/*
+* support function
+*/
 static ULONG 
 StrLen(
 	PCSTR Str
@@ -348,14 +350,16 @@ KLoggerLog(
 
 static 
 void  
-checkStamping(
-_REF_ PBOOLEAN TimePrint, 
-_REF_ PBOOLEAN LevelPrint, 
-IN    PBOOLEAN size, 
-_REF_ PBOOLEAN newSize
+CheckStamping(
+IN  INT* size,
+OUT INT* newSize,
+OUT PBOOLEAN TimePrint, 
+OUT PBOOLEAN LevelPrint 
 ){
 #define TIME_STAMP_SIZE 30
 #define LEVEL_STAMP_SIZE 10
+	*TimePrint = FALSE;
+	*LevelPrint = FALSE;
 	switch (gKLogger->LogDetails) {
 	case LOG_DETAILS_NO:
 		break;
@@ -382,11 +386,12 @@ KLoggerLogDetails(
 	IN  PCSTR LevelStamp ) 
 {
 	INT Result=0;
-	BOOLEAN TimePrint = FALSE;
-	BOOLEAN LevelPrint = FALSE;
 	size_t size = StrLen(LogMsg); 
-	size_t newSize = 0;
-	checkStamping(&TimePrint, &LevelPrint, &size, &newSize);
+
+	BOOLEAN TimePrint;
+	BOOLEAN LevelPrint;
+	size_t newSize;
+	CheckStamping(&size, &newSize, &TimePrint, &LevelPrint);
 
 	if (TimePrint || LevelPrint) {
 		PCHAR FullMessage = (PCHAR)ExAllocatePool(PagedPool, newSize * sizeof(CHAR));

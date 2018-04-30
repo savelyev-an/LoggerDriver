@@ -133,8 +133,9 @@ DriverEntry(
 	IN struct _DRIVER_OBJECT *DriverObject,
 	IN PUNICODE_STRING       RegistryPath
 ) {
+	__debugbreak();
+
 	UNREFERENCED_PARAMETER(RegistryPath);
-	
 	
 	//UNICODE_STRING fileName;  ;
 	//RtlInitUnicodeString(&fileName, L"\\??\\C:\\drivers\\klogger.log");
