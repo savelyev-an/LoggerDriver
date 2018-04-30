@@ -360,6 +360,7 @@ OUT PBOOLEAN LevelPrint
 #define LEVEL_STAMP_SIZE 10
 	*TimePrint = FALSE;
 	*LevelPrint = FALSE;
+	*newSize = 0;
 	switch (gKLogger->LogDetails) {
 	case LOG_DETAILS_NO:
 		break;
@@ -388,9 +389,9 @@ KLoggerLogDetails(
 	INT Result=0;
 	size_t size = StrLen(LogMsg); 
 
-	BOOLEAN TimePrint;
-	BOOLEAN LevelPrint;
-	size_t newSize;
+	BOOLEAN TimePrint = FALSE;
+	BOOLEAN LevelPrint = FALSE;
+	size_t newSize =0;
 	CheckStamping(&size, &newSize, &TimePrint, &LevelPrint);
 
 	if (TimePrint || LevelPrint) {
